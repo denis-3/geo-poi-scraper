@@ -1,5 +1,5 @@
 import Postgres from 'pg'
-import { dbConfig } from './main.mjs';
+import { dbConfig } from './main.js';
 
 const client = new Postgres.Client(dbConfig);
 

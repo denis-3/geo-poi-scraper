@@ -1,16 +1,15 @@
-import * as cheerio from 'cheerio';
-import fetch from 'node-fetch';
-import Postgres from 'pg'
-import 'dotenv/config'
+const cheerio = require('cheerio');
+require('dotenv').config()
+const Postgres = require("pg")
 
 const OPA_API_URL = process.env.OPA_API_URL
 
-export const dbConfig = new Postgres.Client({
+const dbConfig = new Postgres.Client({
 	user: process.env.CLIENT_USER,
 	host: process.env.CLIENT_HOST,
 	password: process.env.CLIENT_PASSWORD,
 	port: process.env.CLIENT_PORT,
-	database: process.env.CLIENT_DB // "database" doesn't seem to work
+	database: process.env.CLIENT_DB
 })
 
 async function getCafeAmenities() {
@@ -23,7 +22,7 @@ async function getCafeAmenities() {
 	}
     const formattedResults = []
     for (let e of filtered) {
-		console.log("each element: ", e)
+		// console.log("each element: ", e)
         e.tags.website = toFetchUrl(e.tags.website)
 
         console.log("~~~Top Level Crawl~~~", e.tags.website)
@@ -45,6 +44,7 @@ async function getCafeAmenities() {
                     }
                 }
             });
+
 			ddgData = await ddgPoiFetch(e.tags.name)
 
 			// TODO: Figure out what to do for Yelp rate limits (500 API calls per 24 hours) — more info at https://docs.developer.yelp.com/docs/fusion-rate-limiting
@@ -54,7 +54,7 @@ async function getCafeAmenities() {
 			const yelpSearchFetch = await fetchWithTimeout(fetch(`
 				https://www.yelp.com/search?find_desc=${encodeURIComponent(e.tags.name)}&find_loc=&l=g%3A-122.3473745587771%2C37.873881200886444%2C-122.54787504705835%2C37.65050533338459
 			`), 7500)
-			console.log("yelpSearchFetch: ", yelpSearchFetch)
+			// console.log("yelpSearchFetch: ", yelpSearchFetch)
 			const yelpSearchText = await yelpSearchFetch.text()
 			var yelpHtml = cheerio.load(yelpSearchText)
 			const bizYelpLink = yelpHtml("span.css-1egxyvc a").attr("href")
@@ -74,11 +74,14 @@ async function getCafeAmenities() {
         } catch(e) {
             console.log("There was a error with POI", e)
         } finally {
-			console.log("ddgData?.hours: ", ddgData?.hours)
+			// console.log("ddgData?.hours: ", ddgData?.hours)
 			// TODO: Need to add another conditional statement for when hours is empty, currently we skip it entirely
 			// An idea would be to actually look at each element pulled from Overpass API and analyze the opening_hours method 
 			// ^ (most places seem to work, with some caveats and formatting adjustments needed)
-			if (ddgData?.hours !== undefined && ddgData?.hours !== '') {
+
+			// Another observation, some sites (ex: https://noecafe.com/) seemingly have hours as an empty string because
+			// the website is a parent website of multiple locations. This poses an edge case and needs a workaround.
+			if (ddgData?.hours !== undefined /* && ddgData?.hours !== '' */) {
 				delete ddgData.hours.closes_soon
 				delete ddgData.hours.is_open
 				delete ddgData.hours.opens_soon
@@ -149,6 +152,8 @@ async function main() {
 
 	const cafeResults = await getCafeAmenities()
 	const genResults = await getGenericAmenity("car_rental")
+
+	// Question: Why are only some results showing? Should be more...
 	finalResults.push(...cafeResults, ...genResults)
 
 
