@@ -1,6 +1,7 @@
 const cheerio = require('cheerio');
 require('dotenv').config()
 const Postgres = require("pg")
+const puppeteer = require('puppeteer');
 
 const OPA_API_URL = process.env.OPA_API_URL
 
@@ -146,15 +147,63 @@ async function getGenericAmenity(amenityType) {
 	return formattedResults
 }
 
+// Function which gets events in San Francisco
+async function getEvents(city = "san-francisco") {
+    console.log("starting getEvents...");
+    const browser = await puppeteer.launch();
+
+	// Meetup.com
+	const meetupPage = await browser.newPage();
+	await meetupPage.goto(`https://www.meetup.com/find/?eventType=inPerson&source=EVENTS&location=us--ca--${city}&distance=tenMiles`, 
+		{ waitUntil: 'networkidle2' }
+	);
+
+	// This extracts data from elements that have data-element-name="categoryResults-eventCard"
+	const extractedMeetupData = await meetupPage.$$eval('div[data-element-name="categoryResults-eventCard"]', 
+		elements => 
+			elements.map(element => {
+			return {
+				text: element.innerText,
+			};
+		})
+	);
+
+	console.log("meetup data: ", extractedMeetupData); 
+
+	// Eventbrite
+	const eventbritePage = await browser.newPage();
+	await eventbritePage.goto(`https://www.eventbrite.com/d/ca--${city}/events--this-week/`, 
+		{ waitUntil: 'networkidle2' }
+	)
+
+	const extractedEventbriteData = await eventbritePage.evaluate(() => {
+		// This extracts data that is wrapped around <script type="application/ld+json">
+		const jsonScripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
+		return jsonScripts.map(script => JSON.parse(script.textContent));
+	});
+	
+	console.log("eventbrite data: ", extractedEventbriteData);
+
+	// TODOs: 
+	// 1. Add as parameter and default value the time frame of future events
+	// 2. Consolidate and standardize attributes within each event
+	// 3. Organize data and return as formattedResults
+
+	await browser.close(); 
+}
+
+// getEvents()
+
 
 async function main() {
 	const finalResults = []
 
 	const cafeResults = await getCafeAmenities()
 	const genResults = await getGenericAmenity("car_rental")
+	const eventResults = await getEvents()
 
 	// Question: Why are only some results showing? Should be more...
-	finalResults.push(...cafeResults, ...genResults)
+	finalResults.push(...cafeResults, ...genResults, ...eventResults)
 
 
 	console.log(finalResults)
