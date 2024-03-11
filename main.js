@@ -1,17 +1,9 @@
 const cheerio = require('cheerio');
 require('dotenv').config()
-const Postgres = require("pg")
+const withDbClient = require('./dbClient');
 const puppeteer = require('puppeteer');
 
 const OPA_API_URL = process.env.OPA_API_URL
-
-const dbConfig = new Postgres.Client({
-	user: process.env.CLIENT_USER,
-	host: process.env.CLIENT_HOST,
-	password: process.env.CLIENT_PASSWORD,
-	port: process.env.CLIENT_PORT,
-	database: process.env.CLIENT_DB
-})
 
 async function getCafeAmenities() {
 	console.log("Starting getCafeAmenities...");
@@ -245,7 +237,7 @@ async function getEvents(city = "san-francisco") {
 	//console.log("eventbrite data: ", extractedEventbriteData);
 
 	// TODOs:
-	// 1. Save results to Postgres and figure out how to format things
+	// 1. Figure out and agree on attribute schema when saving to Postgres
 	// 2. Find increases in efficiency, check if there are cases where Puppeteer gets blocked
 	// 3. Decide whether to include other channels like Eventbrite and how to handle duplicate events cross-posted
 
@@ -269,14 +261,11 @@ async function main() {
 
 	console.log(finalResults)
 
-	// save results
-	await dbConfig.connect()
-
-	for (var i = 0; i < finalResults.length; i++) {
-		await saveToPostgres(finalResults[i])
-	}
-
-	await dbConfig.end()
+	withDbClient(async (dbConfig) => {
+		for (let i = 0; i < finalResults.length; i++) {
+		  await saveToPostgres(finalResults[i], dbConfig);
+		}
+	});
 }
 
 main()
@@ -366,7 +355,7 @@ async function ddgPoiFetch(poiName) {
 }
 
 // save object as OAV triplets to postgres
-async function saveToPostgres(dataObj) {
+async function saveToPostgres(dataObj, client) {
 	const randomId = String(Math.random()).slice(3)
 
 	for (var key in dataObj) {
@@ -376,7 +365,7 @@ async function saveToPostgres(dataObj) {
 				dataObj[key] = dataObj[key].replace("'", "''")
 			}
 			const queryStr = `INSERT INTO poiData(object, attribute, value) VALUES ('${randomId}', '${key}', '${dataObj[key]}')`
-			await dbConfig.query(queryStr)
+			await client.query(queryStr)
 		}
 	}
 }
