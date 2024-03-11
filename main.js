@@ -152,47 +152,108 @@ async function getEvents(city = "san-francisco") {
     console.log("starting getEvents...");
     const browser = await puppeteer.launch();
 
+	// Each event will have:
+	// startDate
+	// endDate
+	// name
+	// url
+	// description
+	// location
+	// image
+	// name of organizer
+
 	// Meetup.com
 	const meetupPage = await browser.newPage();
 	await meetupPage.goto(`https://www.meetup.com/find/?eventType=inPerson&source=EVENTS&location=us--ca--${city}&distance=tenMiles`, 
 		{ waitUntil: 'networkidle2' }
 	);
 
-	// This extracts data from elements that have data-element-name="categoryResults-eventCard"
-	const extractedMeetupData = await meetupPage.$$eval('div[data-element-name="categoryResults-eventCard"]', 
-		elements => 
-			elements.map(element => {
-			return {
-				text: element.innerText,
-			};
-		})
+	let meetupEventData = [];
+
+	// Extract the href attributes from all event links
+	const eventLinks = await meetupPage.evaluate(
+		() => Array.from(
+		  document.querySelectorAll('a[id="event-card-in-search-results"]'),
+		  a => a.getAttribute('href')
+		)
 	);
 
-	console.log("meetup data: ", extractedMeetupData); 
+    // console.log(eventLinks); 
+
+	// There are exact consecutive duplicates, so remove every 2nd link
+	const filteredEventLinks = eventLinks.filter((_, index) => index % 2 === 1);
+	console.log(filteredEventLinks);
+
+	const eventsPages = await browser.newPage();
+
+    // For each link, navigate and extract relevant information
+	for (const link of filteredEventLinks) {
+		try {
+			console.log("Navigating to:", link);
+			
+			await eventsPages.goto(link, {
+				waitUntil: "networkidle0",
+				timeout: 60000 
+			});
+	
+			const extractedEventPageData = await eventsPages.evaluate(() => {
+				const jsonScripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
+				return jsonScripts.map(script => JSON.parse(script.textContent));
+			});
+
+			// Revisit these console logs if I want to get more information
+			// console.log("extractedEventPageData0: ", extractedEventPageData[0])
+			// console.log("extractedEventPageData1: ", extractedEventPageData[1])
+			// console.log("extractedEventPageData2: ", extractedEventPageData[2])
+			
+			let relevantEventData;
+			relevantEventData = {
+				startDate: extractedEventPageData[1]?.startDate,
+				endDate: extractedEventPageData[1]?.endDate,
+				name: extractedEventPageData[1]?.name,
+				url: extractedEventPageData[1]?.url,
+				image: extractedEventPageData[1]?.image?.[0],
+				description: extractedEventPageData[1]?.description,
+				locationName: extractedEventPageData[1]?.location?.name,
+				locationAddress: extractedEventPageData[1]?.location?.address?.streetAddress,
+				organizerName: extractedEventPageData[1]?.organizer?.name
+			}
+			// console.log("Relevant data:", relevantEventData);
+			meetupEventData.push(relevantEventData)
+		} catch (error) {
+			console.error(`Error navigating to ${link}:`, error);
+		}
+	}
+
+	console.log("meetupEventData: ", meetupEventData)
+
+	// TODO: Include event series data?
+
+	// console.log("meetup data: ", extractedMeetupData); 
 
 	// Eventbrite
-	const eventbritePage = await browser.newPage();
+	/* const eventbritePage = await browser.newPage();
 	await eventbritePage.goto(`https://www.eventbrite.com/d/ca--${city}/events--this-week/`, 
 		{ waitUntil: 'networkidle2' }
-	)
+	) */
 
-	const extractedEventbriteData = await eventbritePage.evaluate(() => {
-		// This extracts data that is wrapped around <script type="application/ld+json">
+	/* const extractedEventbriteData = await eventbritePage.evaluate(() => {
 		const jsonScripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
 		return jsonScripts.map(script => JSON.parse(script.textContent));
-	});
+	}); */
 	
-	console.log("eventbrite data: ", extractedEventbriteData);
+	//console.log("eventbrite data: ", extractedEventbriteData);
 
-	// TODOs: 
-	// 1. Add as parameter and default value the time frame of future events
-	// 2. Consolidate and standardize attributes within each event
-	// 3. Organize data and return as formattedResults
+	// TODOs:
+	// 1. Save results to Postgres and figure out how to format things
+	// 2. Find increases in efficiency, check if there are cases where Puppeteer gets blocked
+	// 3. Decide whether to include other channels like Eventbrite and how to handle duplicate events cross-posted
 
 	await browser.close(); 
+	return meetupEventData
 }
 
-// getEvents()
+getEvents()
 
 
 async function main() {
@@ -218,7 +279,7 @@ async function main() {
 	await dbConfig.end()
 }
 
-main()
+// main()
   
 function toFetchUrl(url) {
     if (url.startsWith("//")) {
