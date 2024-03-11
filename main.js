@@ -253,7 +253,7 @@ async function getEvents(city = "san-francisco") {
 	return meetupEventData
 }
 
-getEvents()
+// getEvents()
 
 
 async function main() {
@@ -279,7 +279,7 @@ async function main() {
 	await dbConfig.end()
 }
 
-// main()
+main()
   
 function toFetchUrl(url) {
     if (url.startsWith("//")) {
