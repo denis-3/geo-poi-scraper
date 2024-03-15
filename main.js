@@ -150,16 +150,6 @@ async function getEvents(city = "san-francisco") {
 	console.log("starting getEvents...");
 	const browser = await puppeteer.launch();
 
-	// Each event will have:
-	// startDate
-	// endDate
-	// name
-	// url
-	// description
-	// location
-	// image
-	// name of organizer
-
 	// Meetup.com
 	const meetupPage = await browser.newPage();
 	await meetupPage.goto(`https://www.meetup.com/find/?eventType=inPerson&source=EVENTS&location=us--ca--${city}&distance=tenMiles`, {
@@ -206,6 +196,7 @@ async function getEvents(city = "san-francisco") {
 
 			let relevantEventData;
 			relevantEventData = {
+				type: "event",
 				startDate: extractedEventPageData[1]?.startDate,
 				endDate: extractedEventPageData[1]?.endDate,
 				name: extractedEventPageData[1]?.name,
@@ -214,8 +205,9 @@ async function getEvents(city = "san-francisco") {
 				description: extractedEventPageData[1]?.description,
 				locationName: extractedEventPageData[1]?.location?.name,
 				locationAddress: extractedEventPageData[1]?.location?.address?.streetAddress,
-				organizerName: extractedEventPageData[1]?.organizer?.name,
+				organizerName: extractedEventPageData[1]?.organizer?.name, 
 				_attrTypes: {
+					type: "type",
 					startDate: "date",
 					endDate: "date",
 					name: "string",
@@ -227,7 +219,6 @@ async function getEvents(city = "san-francisco") {
 					organizerName: "string",
 				}
 			}
-			// console.log("Relevant data:", relevantEventData);
 			meetupEventData.push(relevantEventData)
 		} catch (error) {
 			console.error(`Error navigating to ${link}:`, error);
@@ -384,26 +375,20 @@ async function ddgPoiFetch(poiName) {
 // save object as OAV triplets to postgres
 async function saveToPostgres(dataObj, client) {
 	if (typeof dataObj._attrTypes !== "object" || dataObj._attrTypes === null) {
-		throw Error("Must have _attrTypes key as array")
+	  throw Error("Must have _attrTypes key as an object");
 	}
-	// specific attribute types can be figured out once we sync with geo about their primitive types
-	const attrTypes = JSON.parse(JSON.stringify(dataObj._attrTypes))
-	delete dataObj._attrTypes
-
-	const randomId = uuid.v4()
-
-	const dataObjKeys = Object.keys(dataObj)
-	const dataObjVals = Object.values(dataObj)
-
-	for (var key in dataObj) {
-		if (!key.startsWith("_") && String(dataObj[key]) !== "undefined" && String(dataObj[key]) !== "null") {
-			// quote escaping
-			if (typeof dataObj[key] == "string" && dataObj[key].includes("'")) {
-				dataObj[key] = dataObj[key].replace("'", "''")
-			}
-			const queryStr = "INSERT INTO poiData(object, attribute, value, attributeType) " +
-				`VALUES ('${randomId}', '${key}', '${dataObj[key]}', '${attrTypes[key]}')`
-			await client.query(queryStr)
-		}
+	// Clone the attrTypes and remove from dataObj
+	const attrTypes = JSON.parse(JSON.stringify(dataObj._attrTypes));
+	delete dataObj._attrTypes;
+  
+	// Generate a random ID for the object
+	const randomId = uuid.v4();
+  
+	for (const [key, value] of Object.entries(dataObj)) {
+	  if (!key.startsWith("_") && String(value) !== "undefined" && String(value) !== "null") {
+		const queryStr = "INSERT INTO poiData(object, attribute, value, attributeType) VALUES($1, $2, $3, $4)";
+		await client.query(queryStr, [randomId, key, value, attrTypes[key]]);
+	  }
 	}
-}
+  }
+  

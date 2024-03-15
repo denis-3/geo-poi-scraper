@@ -32,5 +32,5 @@ if (!tableName) {
   process.exit(1);
 }
 
-// viewTableContent(tableName);
+viewTableContent(tableName);
 // resetPoiDataTable()
