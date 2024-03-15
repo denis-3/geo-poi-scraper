@@ -13,10 +13,24 @@ async function viewTableContent(tableName) {
   });
 }
 
+async function resetPoiDataTable() {
+	await withDbClient(async client => {
+		try {
+			await client.query('DROP TABLE poiData')
+			console.log("Deleted table")
+		} catch {
+			console.log("Table does not exist to drop")
+		}
+		await client.query("CREATE TABLE poiData(rowId SERIAL, object TEXT, attribute TEXT, value TEXT, attributeType TEXT)")
+		console.log("Created table again")
+	})
+}
+
 // This is the tableName
-const tableName = 'poidata'; 
+const tableName = 'poidata';
 if (!tableName) {
   process.exit(1);
 }
 
-viewTableContent(tableName);
+// viewTableContent(tableName);
+// resetPoiDataTable()

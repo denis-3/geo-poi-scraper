@@ -2,61 +2,61 @@ const cheerio = require('cheerio');
 require('dotenv').config()
 const withDbClient = require('./dbClient');
 const puppeteer = require('puppeteer');
+const uuid = require("uuid")
 
 const OPA_API_URL = process.env.OPA_API_URL
 
 async function getCafeAmenities() {
 	console.log("Starting getCafeAmenities...");
-    const filtered = await getPoisFromOverpass("cafe")
-	console.log("Filtered results:", filtered);
-	if (filtered === undefined) {
-		console.error("Error!!")
-		return
-	}
-    const formattedResults = []
-    for (let e of filtered) {
-		// console.log("each element: ", e)
-        e.tags.website = toFetchUrl(e.tags.website)
+	const cafeResults = await getGenericAmenity("cafe")
+	// console.log("Initial results:", cafeResults);
+	for (var _i = 0; _i < cafeResults.length; _i++) {
+		const data = cafeResults[_i]
+		data.type = "cafe"
 
-        console.log("~~~Top Level Crawl~~~", e.tags.website)
-        var menuUrl = undefined
+		console.log("~~~Top Level Crawl", data.website)
+		var menuUrl = undefined
 		var ddgData = {}
 		var yelpData = []
-        try {
-            let websiteContent = await fetchWithTimeout(fetch(e.tags.website), 5000);
-            let text = await websiteContent.text();
-            const $ = cheerio.load(text);
-            $('a').each((i, link) => {
-                let href = $(link).attr('href');
-                if (menuUrl === undefined && href?.includes("menu")) {
-                    console.log("found menu", href)
-                    if (href.startsWith("https://") || href.startsWith("http://") || href.startsWith("//")) {
-                        menuUrl = toFetchUrl(href)
-                    } else {
-                        menuUrl = toAbsoluteUrl(e.tags.website, href)
-                    }
-                }
-            });
 
-			ddgData = await ddgPoiFetch(e.tags.name)
+		try {
+			data.website = toFetchUrl(data.website)
+			let websiteContent = await fetchWithTimeout(fetch(data.website), 5000);
+			let text = await websiteContent.text();
+			const $ = cheerio.load(text);
+			$('a').each((i, link) => {
+				let href = $(link).attr('href');
+				if (menuUrl === undefined && href?.includes("menu")) {
+					console.log("found menu", href)
+					if (href.startsWith("https://") || href.startsWith("http://") || href.startsWith("//")) {
+						menuUrl = toFetchUrl(href)
+					} else {
+						menuUrl = toAbsoluteUrl(data.website, href)
+					}
+				}
+			});
+
+			ddgData = await ddgPoiFetch(data.name)
 
 			// TODO: Figure out what to do for Yelp rate limits (500 API calls per 24 hours) — more info at https://docs.developer.yelp.com/docs/fusion-rate-limiting
 			// ^ They mention caching as a potential method to minimize API calls, could also contact them to get more calls
 
 			// search for business on yelp
 			const yelpSearchFetch = await fetchWithTimeout(fetch(`
-				https://www.yelp.com/search?find_desc=${encodeURIComponent(e.tags.name)}&find_loc=&l=g%3A-122.3473745587771%2C37.873881200886444%2C-122.54787504705835%2C37.65050533338459
+				https://www.yelp.com/search?find_desc=${encodeURIComponent(data.name)}&find_loc=&l=g%3A-122.3473745587771%2C37.873881200886444%2C-122.54787504705835%2C37.65050533338459
 			`), 7500)
-			// console.log("yelpSearchFetch: ", yelpSearchFetch)
+
 			const yelpSearchText = await yelpSearchFetch.text()
 			var yelpHtml = cheerio.load(yelpSearchText)
 			const bizYelpLink = yelpHtml("span.css-1egxyvc a").attr("href")
+
 			// get business yelp page
 			const yelpDataFetch = await fetchWithTimeout(fetch(`https://www.yelp.com${bizYelpLink}`), 7500)
 			var yelpDataText = await yelpDataFetch.text()
 			yelpDataText = yelpDataText.replaceAll("&quot;", "\"")
 			yelpDataText = yelpDataText.substring(yelpDataText.indexOf("organizedProperties.0.properties"), yelpDataText.lastIndexOf("organizedProperties.0.properties"))
 			const attributesRegexp = new RegExp("\"displayText\":\".{0,50}?\"", "g")
+
 			// add all the amenities to the yelp data
 			yelpDataText.match(attributesRegexp).forEach(str => {
 				yelpData.push(
@@ -64,50 +64,47 @@ async function getCafeAmenities() {
 				)
 			});
 			yelpData = yelpData.filter(x => x != "Women-owned" && !x.includes("noise"))
-        } catch(e) {
-            console.log("There was a error with POI", e)
-        } finally {
+		} catch (e) {
+			console.log("There was a error with POI", e)
+		} finally {
 			// console.log("ddgData?.hours: ", ddgData?.hours)
 			// TODO: Need to add another conditional statement for when hours is empty, currently we skip it entirely
-			// An idea would be to actually look at each element pulled from Overpass API and analyze the opening_hours method 
+			// An idea would be to actually look at each element pulled from Overpass API and analyze the opening_hours method
 			// ^ (most places seem to work, with some caveats and formatting adjustments needed)
 
 			// Another observation, some sites (ex: https://noecafe.com/) seemingly have hours as an empty string because
 			// the website is a parent website of multiple locations. This poses an edge case and needs a workaround.
-			if (ddgData?.hours !== undefined /* && ddgData?.hours !== '' */) {
+			if (ddgData?.hours !== undefined /* && ddgData?.hours !== '' */ ) {
 				delete ddgData.hours.closes_soon
 				delete ddgData.hours.is_open
 				delete ddgData.hours.opens_soon
 				delete ddgData.hours.state_switch_time
-				ddgData.hours.monday = ddgData.hours.Mon
-				ddgData.hours.tuesday = ddgData.hours.Tue
-				ddgData.hours.wednsday = ddgData.hours.Wed
-				ddgData.hours.thursday = ddgData.hours.Thu
-				ddgData.hours.friday = ddgData.hours.Fri
-				ddgData.hours.saturday = ddgData.hours.Sat
-				ddgData.hours.sunday = ddgData.hours.Sun
+				// is name change neded?
+				// ddgData.hours.monday = ddgData.hours.Mon
+				// ddgData.hours.tuesday = ddgData.hours.Tue
+				// ddgData.hours.wednsday = ddgData.hours.Wed
+				// ddgData.hours.thursday = ddgData.hours.Thu
+				// ddgData.hours.friday = ddgData.hours.Fri
+				// ddgData.hours.saturday = ddgData.hours.Sat
+				// ddgData.hours.sunday = ddgData.hours.Sun
+
+				data.hours = JSON.stringify(ddgData.hours)
+			} else if (data?._allOsmResults?.tags?.opening_hours != undefined) {
+				data.hours = data._allOsmResults.tags.opening_hours
 			}
-			if (JSON.stringify(ddgData).length <= 15) {
-				delete ddgData.hours
-			}
-			const dataObj = {
-				type: "cafe",
-				website: e.tags.website,
-				menuWebsite: menuUrl,
-				lattitude: e.lat,
-				longitude: e.lon,
-				name: e.tags.name,
-				address: ddgData?.address || `${e.tags["addr:housenumber"] | e.tags["addr:number"]} ${e.tags["addr:street"]}`,
-				price: priceToNumber(ddgData.price),
-				hours: JSON.stringify(ddgData.hours),
-				reviewsWebsite: ddgData.url,
-				phoneNumber: ddgData.phone,
-				amenities: yelpData.length == 0 ? undefined : yelpData
-			}
-			formattedResults.push(dataObj)
+
+			data.address =  ddgData?.address
+			data.price = priceToNumber(ddgData.price)
+			data.reviewsWebsite = ddgData.url
+			data.amenities = yelpData.length == 0 ? undefined : yelpData
+			data.phoneNumber = ddgData.phone
+			data._attrTypes.price = "int"
+			data._attrTypes.reviewsWebsite = "url"
+			data._attrTypes.amenities = "string"
+			data._attrTypes.phoneNumber = "phoneNumber"
 		}
-    }
-	return formattedResults
+	}
+	return cafeResults
 }
 
 async function getGenericAmenity(amenityType) {
@@ -124,14 +121,23 @@ async function getGenericAmenity(amenityType) {
 		const ddgData = await ddgPoiFetch(e.tags.name)
 
 		const dataObj = {
-			type: amenityType,
+			// type: amenityType,
+			type: "point of interest",
 			website: e.tags.website,
 			lattitude: e.lat,
 			longitude: e.lon,
 			name: e.tags.name,
-			address: ddgData?.address || `${e.tags["addr:housenumber"] | e.tags["addr:number"]} ${e.tags["addr:street"]}`,
-			reviewsWebsite: ddgData.url,
-			phoneNumber: ddgData.phone,
+			address: `${e.tags["addr:housenumber"] | e.tags["addr:number"]} ${e.tags["addr:street"]}`,
+			_attrTypes: {
+				type: "type",
+				website: "url",
+				lattitude: "float",
+				longitude: "float",
+				name: "string",
+				address: "address",
+			},
+			// stored just in case for reference later
+			_allOsmResults: JSON.parse(JSON.stringify(e))
 		}
 		formattedResults.push(dataObj)
 	}
@@ -141,8 +147,8 @@ async function getGenericAmenity(amenityType) {
 
 // Function which gets events in San Francisco
 async function getEvents(city = "san-francisco") {
-    console.log("starting getEvents...");
-    const browser = await puppeteer.launch();
+	console.log("starting getEvents...");
+	const browser = await puppeteer.launch();
 
 	// Each event will have:
 	// startDate
@@ -156,21 +162,21 @@ async function getEvents(city = "san-francisco") {
 
 	// Meetup.com
 	const meetupPage = await browser.newPage();
-	await meetupPage.goto(`https://www.meetup.com/find/?eventType=inPerson&source=EVENTS&location=us--ca--${city}&distance=tenMiles`, 
-		{ waitUntil: 'networkidle2' }
-	);
+	await meetupPage.goto(`https://www.meetup.com/find/?eventType=inPerson&source=EVENTS&location=us--ca--${city}&distance=tenMiles`, {
+		waitUntil: 'networkidle2'
+	});
 
 	let meetupEventData = [];
 
 	// Extract the href attributes from all event links
 	const eventLinks = await meetupPage.evaluate(
 		() => Array.from(
-		  document.querySelectorAll('a[id="event-card-in-search-results"]'),
-		  a => a.getAttribute('href')
+			document.querySelectorAll('a[id="event-card-in-search-results"]'),
+			a => a.getAttribute('href')
 		)
 	);
 
-    // console.log(eventLinks); 
+	// console.log(eventLinks);
 
 	// There are exact consecutive duplicates, so remove every 2nd link
 	const filteredEventLinks = eventLinks.filter((_, index) => index % 2 === 1);
@@ -178,16 +184,16 @@ async function getEvents(city = "san-francisco") {
 
 	const eventsPages = await browser.newPage();
 
-    // For each link, navigate and extract relevant information
+	// For each link, navigate and extract relevant information
 	for (const link of filteredEventLinks) {
 		try {
 			console.log("Navigating to:", link);
-			
+
 			await eventsPages.goto(link, {
 				waitUntil: "networkidle0",
-				timeout: 60000 
+				timeout: 60000
 			});
-	
+
 			const extractedEventPageData = await eventsPages.evaluate(() => {
 				const jsonScripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
 				return jsonScripts.map(script => JSON.parse(script.textContent));
@@ -197,7 +203,7 @@ async function getEvents(city = "san-francisco") {
 			// console.log("extractedEventPageData0: ", extractedEventPageData[0])
 			// console.log("extractedEventPageData1: ", extractedEventPageData[1])
 			// console.log("extractedEventPageData2: ", extractedEventPageData[2])
-			
+
 			let relevantEventData;
 			relevantEventData = {
 				startDate: extractedEventPageData[1]?.startDate,
@@ -208,7 +214,18 @@ async function getEvents(city = "san-francisco") {
 				description: extractedEventPageData[1]?.description,
 				locationName: extractedEventPageData[1]?.location?.name,
 				locationAddress: extractedEventPageData[1]?.location?.address?.streetAddress,
-				organizerName: extractedEventPageData[1]?.organizer?.name
+				organizerName: extractedEventPageData[1]?.organizer?.name,
+				_attrTypes: {
+					startDate: "date",
+					endDate: "date",
+					name: "string",
+					url: "url",
+					image: "url-img",
+					description: "string",
+					locationName: "string",
+					locationAddress: "address",
+					organizerName: "string",
+				}
 			}
 			// console.log("Relevant data:", relevantEventData);
 			meetupEventData.push(relevantEventData)
@@ -221,11 +238,11 @@ async function getEvents(city = "san-francisco") {
 
 	// TODO: Include event series data?
 
-	// console.log("meetup data: ", extractedMeetupData); 
+	// console.log("meetup data: ", extractedMeetupData);
 
 	// Eventbrite
 	/* const eventbritePage = await browser.newPage();
-	await eventbritePage.goto(`https://www.eventbrite.com/d/ca--${city}/events--this-week/`, 
+	await eventbritePage.goto(`https://www.eventbrite.com/d/ca--${city}/events--this-week/`,
 		{ waitUntil: 'networkidle2' }
 	) */
 
@@ -233,7 +250,7 @@ async function getEvents(city = "san-francisco") {
 		const jsonScripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
 		return jsonScripts.map(script => JSON.parse(script.textContent));
 	}); */
-	
+
 	//console.log("eventbrite data: ", extractedEventbriteData);
 
 	// TODOs:
@@ -241,7 +258,7 @@ async function getEvents(city = "san-francisco") {
 	// 2. Find increases in efficiency, check if there are cases where Puppeteer gets blocked
 	// 3. Decide whether to include other channels like Eventbrite and how to handle duplicate events cross-posted
 
-	await browser.close(); 
+	await browser.close();
 	return meetupEventData
 }
 
@@ -249,58 +266,70 @@ async function getEvents(city = "san-francisco") {
 
 
 async function main() {
+	// targeted amenities for generic scraping
+	// this is just a start, more can be added
+	const targetAmenities = [
+		"car_rental",
+		"fast_food",
+		"restaurant",
+		"library",
+		"fuel",
+		"bank",
+	]
 	const finalResults = []
 
 	const cafeResults = await getCafeAmenities()
-	const genResults = await getGenericAmenity("car_rental")
 	const eventResults = await getEvents()
 
-	// Question: Why are only some results showing? Should be more...
-	finalResults.push(...cafeResults, ...genResults, ...eventResults)
+	finalResults.push(...cafeResults, ...eventResults)
 
+	// get generic amenities (it takes a bit)
+	// for (var i = 0; i < targetAmenities.length; i++) {
+	// 	const genResults = await getGenericAmenity(targetAmenities)
+	// 	finalResults.push(...genResults)
+	// }
 
 	console.log(finalResults)
 
 	withDbClient(async (dbConfig) => {
 		for (let i = 0; i < finalResults.length; i++) {
-		  await saveToPostgres(finalResults[i], dbConfig);
+			await saveToPostgres(finalResults[i], dbConfig);
 		}
 	});
 }
 
 main()
-  
+
 function toFetchUrl(url) {
-    if (url.startsWith("//")) {
-        url = url.slice(2, url.length)
-    }
+	if (url.startsWith("//") ||
+	(url.startsWith("http://") == false &&
+	url.startsWith("https://") == false) ) {
 
-    if (url.startsWith("http://") == false &&
-        url.startsWith("https://") == false) {
-        url = "http://" + url
-    }
+		url = "http:" + url
+	}
 
-    if (url.endsWith("/")) {
-        url = url.slice(0, -1)
-    }
+	if (url.endsWith("/")) {
+		url = url.slice(0, -1)
+	}
 
-    return url
+	return url
 }
 
 function toAbsoluteUrl(base, relative) {
-    if (!base.endsWith("/") && !relative.startsWith("/")) {
-        base += "/"
-    }
-    return base + relative;
+	base = toFetchUrl(base)
+	if (!base.endsWith("/") && !relative.startsWith("/")) {
+		base += "/"
+	}
+	return base + relative;
 }
 
 function fetchWithTimeout(fetchReq, timeout) {
-    return Promise.race([
-        fetchReq,
-        new Promise((resolve, reject) => {
-            setTimeout(() => reject(`Fetch timeout reached: ${timeout}ms`), timeout)
-        })
-    ])
+	return Promise.race([
+		fetchReq,
+		new Promise((resolve, reject) => {
+			setTimeout(() => reject(`Fetch timeout reached: ${timeout}ms`), timeout)
+		})
+	])
 }
 
 function priceToNumber(priceVal) {
@@ -330,8 +359,7 @@ async function getPoisFromOverpass(poiType) {
 		;
 		node(37.71044257039148,-122.52330780029298,37.80647004655113,-122.34684155555281)
 		[amenity=${poiType}];
-		out;`
-		)
+		out;`)
 	})
 	if (!initialQuery.ok) {
 		const result = await initialQuery.text()
@@ -343,8 +371,7 @@ async function getPoisFromOverpass(poiType) {
 
 async function ddgPoiFetch(poiName) {
 	const ddgDataFetch = await fetchWithTimeout(
-		fetch("https://duckduckgo.com/local.js?l=us-en&q=" + encodeURIComponent(poiName + " san francisco"))
-	, 5000)
+		fetch("https://duckduckgo.com/local.js?l=us-en&q=" + encodeURIComponent(poiName + " san francisco")), 5000)
 	const ddgData = await ddgDataFetch.json()
 	if (ddgDataFetch.ok == false) {
 		throw Error("Invalid status code")
@@ -356,15 +383,26 @@ async function ddgPoiFetch(poiName) {
 
 // save object as OAV triplets to postgres
 async function saveToPostgres(dataObj, client) {
-	const randomId = String(Math.random()).slice(3)
+	if (typeof dataObj._attrTypes !== "object" || dataObj._attrTypes === null) {
+		throw Error("Must have _attrTypes key as array")
+	}
+	// specific attribute types can be figured out once we sync with geo about their primitive types
+	const attrTypes = JSON.parse(JSON.stringify(dataObj._attrTypes))
+	delete dataObj._attrTypes
+
+	const randomId = uuid.v4()
+
+	const dataObjKeys = Object.keys(dataObj)
+	const dataObjVals = Object.values(dataObj)
 
 	for (var key in dataObj) {
-		if (String(dataObj[key]) !== "undefined" && String(dataObj[key]) !== "null") {
+		if (!key.startsWith("_") && String(dataObj[key]) !== "undefined" && String(dataObj[key]) !== "null") {
 			// quote escaping
 			if (typeof dataObj[key] == "string" && dataObj[key].includes("'")) {
 				dataObj[key] = dataObj[key].replace("'", "''")
 			}
-			const queryStr = `INSERT INTO poiData(object, attribute, value) VALUES ('${randomId}', '${key}', '${dataObj[key]}')`
+			const queryStr = "INSERT INTO poiData(object, attribute, value, attributeType) " +
+				`VALUES ('${randomId}', '${key}', '${dataObj[key]}', '${attrTypes[key]}')`
 			await client.query(queryStr)
 		}
 	}
