@@ -156,23 +156,43 @@ async function getEvents(city = "san-francisco") {
 		waitUntil: 'networkidle2'
 	});
 
-	let meetupEventData = [];
+	// Eventbrite
+	const eventbritePage = await browser.newPage();
+	await eventbritePage.goto(`https://www.eventbrite.com/d/ca--${city}/events--this-week/`,
+		{ waitUntil: 'networkidle2' }
+	)
+	
+	const eventBriteLinks = await eventbritePage.evaluate(
+		() => Array.from(
+			document.querySelectorAll('a[class="event-card-link "]'),
+			a => a.getAttribute('href')
+		)
+	);
 
-	// Extract the href attributes from all event links
-	const eventLinks = await meetupPage.evaluate(
+	// console.log("eventBriteLinks: ", eventBriteLinks)
+
+	const meetupLinks = await meetupPage.evaluate(
 		() => Array.from(
 			document.querySelectorAll('a[id="event-card-in-search-results"]'),
 			a => a.getAttribute('href')
 		)
 	);
 
-	// console.log(eventLinks);
+	// console.log(meetupLinks);
 
-	// There are exact consecutive duplicates, so remove every 2nd link
-	const filteredEventLinks = eventLinks.filter((_, index) => index % 2 === 1);
-	console.log(filteredEventLinks);
+	let compiledEventLinks = [...eventBriteLinks, ...meetupLinks]
+
+	let filteredEventLinks = [];
+	compiledEventLinks.forEach((eventLink) => {
+		if (!(filteredEventLinks.includes(eventLink))) {
+			filteredEventLinks.push(eventLink)
+		}
+	})
+
+	console.log("filteredEventLinks: ", filteredEventLinks);
 
 	const eventsPages = await browser.newPage();
+	let meetupEventData = [];
 
 	// For each link, navigate and extract relevant information
 	for (const link of filteredEventLinks) {
@@ -189,36 +209,62 @@ async function getEvents(city = "san-francisco") {
 				return jsonScripts.map(script => JSON.parse(script.textContent));
 			});
 
+			let relevantEventData;
+			if (link.includes("https://www.eventbrite.com")) {
+				relevantEventData = {
+					type: "event",
+					startDate: extractedEventPageData[0]?.startDate,
+					endDate: extractedEventPageData[0]?.endDate,
+					name: extractedEventPageData[0]?.name,
+					url: extractedEventPageData[0]?.url,
+					image: extractedEventPageData[0]?.image,
+					description: extractedEventPageData[0]?.description,
+					locationName: extractedEventPageData[0]?.location?.name,
+					locationAddress: extractedEventPageData[0]?.location?.address?.streetAddress,
+					organizerName: extractedEventPageData[0]?.organizer?.name, 
+					_attrTypes: {
+						type: "type",
+						startDate: "date",
+						endDate: "date",
+						name: "string",
+						url: "url",
+						image: "url-img",
+						description: "string",
+						locationName: "string",
+						locationAddress: "address",
+						organizerName: "string",
+					}
+				}
+			} else {
+				relevantEventData = {
+					type: "event",
+					startDate: extractedEventPageData[1]?.startDate,
+					endDate: extractedEventPageData[1]?.endDate,
+					name: extractedEventPageData[1]?.name,
+					url: extractedEventPageData[1]?.url,
+					image: extractedEventPageData[1]?.image?.[0],
+					description: extractedEventPageData[1]?.description,
+					locationName: extractedEventPageData[1]?.location?.name,
+					locationAddress: extractedEventPageData[1]?.location?.address?.streetAddress,
+					organizerName: extractedEventPageData[1]?.organizer?.name, 
+					_attrTypes: {
+						type: "type",
+						startDate: "date",
+						endDate: "date",
+						name: "string",
+						url: "url",
+						image: "url-img",
+						description: "string",
+						locationName: "string",
+						locationAddress: "address",
+						organizerName: "string",
+					}
+				}
+			}
 			// Revisit these console logs if I want to get more information
 			// console.log("extractedEventPageData0: ", extractedEventPageData[0])
 			// console.log("extractedEventPageData1: ", extractedEventPageData[1])
 			// console.log("extractedEventPageData2: ", extractedEventPageData[2])
-
-			let relevantEventData;
-			relevantEventData = {
-				type: "event",
-				startDate: extractedEventPageData[1]?.startDate,
-				endDate: extractedEventPageData[1]?.endDate,
-				name: extractedEventPageData[1]?.name,
-				url: extractedEventPageData[1]?.url,
-				image: extractedEventPageData[1]?.image?.[0],
-				description: extractedEventPageData[1]?.description,
-				locationName: extractedEventPageData[1]?.location?.name,
-				locationAddress: extractedEventPageData[1]?.location?.address?.streetAddress,
-				organizerName: extractedEventPageData[1]?.organizer?.name, 
-				_attrTypes: {
-					type: "type",
-					startDate: "date",
-					endDate: "date",
-					name: "string",
-					url: "url",
-					image: "url-img",
-					description: "string",
-					locationName: "string",
-					locationAddress: "address",
-					organizerName: "string",
-				}
-			}
 			meetupEventData.push(relevantEventData)
 		} catch (error) {
 			console.error(`Error navigating to ${link}:`, error);
@@ -227,27 +273,10 @@ async function getEvents(city = "san-francisco") {
 
 	console.log("meetupEventData: ", meetupEventData)
 
-	// TODO: Include event series data?
-
-	// console.log("meetup data: ", extractedMeetupData);
-
-	// Eventbrite
-	/* const eventbritePage = await browser.newPage();
-	await eventbritePage.goto(`https://www.eventbrite.com/d/ca--${city}/events--this-week/`,
-		{ waitUntil: 'networkidle2' }
-	) */
-
-	/* const extractedEventbriteData = await eventbritePage.evaluate(() => {
-		const jsonScripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
-		return jsonScripts.map(script => JSON.parse(script.textContent));
-	}); */
-
-	//console.log("eventbrite data: ", extractedEventbriteData);
-
 	// TODOs:
-	// 1. Figure out and agree on attribute schema when saving to Postgres
-	// 2. Find increases in efficiency, check if there are cases where Puppeteer gets blocked
-	// 3. Decide whether to include other channels like Eventbrite and how to handle duplicate events cross-posted
+	// 1. Find increases in efficiency, check if there are cases where Puppeteer gets blocked
+	// TODO: Include event series data?
+	// TODO: Tackle cross-platform events
 
 	await browser.close();
 	return meetupEventData
