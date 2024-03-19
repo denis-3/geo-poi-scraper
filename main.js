@@ -148,6 +148,7 @@ async function getGenericAmenity(amenityType) {
 // Function which gets events in San Francisco
 async function getEvents(city = "san-francisco") {
 	console.log("starting getEvents...");
+	const encounteredEvents = []
 	const browser = await puppeteer.launch();
 
 	// Meetup.com
@@ -161,7 +162,7 @@ async function getEvents(city = "san-francisco") {
 	await eventbritePage.goto(`https://www.eventbrite.com/d/ca--${city}/events--this-week/`,
 		{ waitUntil: 'networkidle2' }
 	)
-	
+
 	const eventBriteLinks = await eventbritePage.evaluate(
 		() => Array.from(
 			document.querySelectorAll('a[class="event-card-link "]'),
@@ -210,57 +211,41 @@ async function getEvents(city = "san-francisco") {
 			});
 
 			let relevantEventData;
-			if (link.includes("https://www.eventbrite.com")) {
-				relevantEventData = {
-					type: "event",
-					startDate: extractedEventPageData[0]?.startDate,
-					endDate: extractedEventPageData[0]?.endDate,
-					name: extractedEventPageData[0]?.name,
-					url: extractedEventPageData[0]?.url,
-					image: extractedEventPageData[0]?.image,
-					description: extractedEventPageData[0]?.description,
-					locationName: extractedEventPageData[0]?.location?.name,
-					locationAddress: extractedEventPageData[0]?.location?.address?.streetAddress,
-					organizerName: extractedEventPageData[0]?.organizer?.name, 
-					_attrTypes: {
-						type: "type",
-						startDate: "date",
-						endDate: "date",
-						name: "string",
-						url: "url",
-						image: "url-img",
-						description: "string",
-						locationName: "string",
-						locationAddress: "address",
-						organizerName: "string",
-					}
-				}
-			} else {
-				relevantEventData = {
-					type: "event",
-					startDate: extractedEventPageData[1]?.startDate,
-					endDate: extractedEventPageData[1]?.endDate,
-					name: extractedEventPageData[1]?.name,
-					url: extractedEventPageData[1]?.url,
-					image: extractedEventPageData[1]?.image?.[0],
-					description: extractedEventPageData[1]?.description,
-					locationName: extractedEventPageData[1]?.location?.name,
-					locationAddress: extractedEventPageData[1]?.location?.address?.streetAddress,
-					organizerName: extractedEventPageData[1]?.organizer?.name, 
-					_attrTypes: {
-						type: "type",
-						startDate: "date",
-						endDate: "date",
-						name: "string",
-						url: "url",
-						image: "url-img",
-						description: "string",
-						locationName: "string",
-						locationAddress: "address",
-						organizerName: "string",
-					}
+			const index = link.includes("https://www.eventbrite.com") ? 0 : 1
+			relevantEventData = {
+				type: "event",
+				startDate: extractedEventPageData[index]?.startDate,
+				endDate: extractedEventPageData[index]?.endDate,
+				name: extractedEventPageData[index]?.name,
+				url: extractedEventPageData[index]?.url,
+				image: index == 0 ? extractedEventPageData[0]?.image : extractedEventPageData[1]?.image?.[0],
+				description: extractedEventPageData[index]?.description,
+				locationName: extractedEventPageData[index]?.location?.name,
+				locationAddress: extractedEventPageData[index]?.location?.address?.streetAddress,
+				organizerName: extractedEventPageData[index]?.organizer?.name,
+				_attrTypes: {
+					type: "type",
+					startDate: "date",
+					endDate: "date",
+					name: "string",
+					url: "url",
+					image: "url-img",
+					description: "string",
+					locationName: "string",
+					locationAddress: "address",
+					organizerName: "string",
 				}
 			}
+			// concatenate some relevant paramaters to uniquely distinguish event
+			const eventFingerprint = (relevantEventData.name +
+				relevantEventData.organizerName +
+				relevantEventData.startDate).toLowerCase()
+
+			if (encounteredEvents.includes(eventFingerprint)) {
+				continue;
+			}
+
+			encounteredEvents.push(eventFingerprint)
 			// Revisit these console logs if I want to get more information
 			// console.log("extractedEventPageData0: ", extractedEventPageData[0])
 			// console.log("extractedEventPageData1: ", extractedEventPageData[1])
@@ -409,10 +394,10 @@ async function saveToPostgres(dataObj, client) {
 	// Clone the attrTypes and remove from dataObj
 	const attrTypes = JSON.parse(JSON.stringify(dataObj._attrTypes));
 	delete dataObj._attrTypes;
-  
+
 	// Generate a random ID for the object
 	const randomId = uuid.v4();
-  
+
 	for (const [key, value] of Object.entries(dataObj)) {
 	  if (!key.startsWith("_") && String(value) !== "undefined" && String(value) !== "null") {
 		const queryStr = "INSERT INTO poiData(object, attribute, value, attributeType) VALUES($1, $2, $3, $4)";
@@ -420,4 +405,3 @@ async function saveToPostgres(dataObj, client) {
 	  }
 	}
   }
-  
