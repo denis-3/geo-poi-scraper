@@ -3,6 +3,7 @@ require('dotenv').config()
 const withDbClient = require('./dbClient');
 const puppeteer = require('puppeteer');
 const uuid = require("uuid")
+const XLSX = require('xlsx');
 
 const OPA_API_URL = process.env.OPA_API_URL
 
@@ -261,13 +262,55 @@ async function getEvents(city = "san-francisco") {
 	// TODOs:
 	// 1. Find increases in efficiency, check if there are cases where Puppeteer gets blocked
 	// TODO: Include event series data?
-	// TODO: Tackle cross-platform events
 
 	await browser.close();
 	return meetupEventData
 }
 
 // getEvents()
+
+// Read neighborhood organizations based on neighborhood name
+async function getOrganizationsByNeighborhood(url, neighborhoodName) {
+	const response = await fetch(url);
+	const arrayBuffer = await response.arrayBuffer();
+	const data = new Uint8Array(arrayBuffer);
+
+	const workbook = XLSX.read(data, {type: 'array'});
+	const worksheet = workbook.Sheets[neighborhoodName];
+
+  	const json = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+
+	// We only want the "PHYSICAL NOTICES" and "ELECTRONIC NOTICES" types of organizationa
+	const physicalNotices = json.filter(row => row['NOTIFICATION PREFERENCES'] === 'Physical');
+	const electronicNotices = json.filter(row => row['NOTIFICATION PREFERENCES'] === 'Electronic');
+
+	const notices = physicalNotices.concat(electronicNotices);
+
+	return notices;
+}
+
+const neighborhoodNames = [
+    'Citywide', 'Bayview', 'Bernal Heights', 'Castro Upper Market', 'Chinatown', 
+    'Crocker Amazon', 'Diamond Heights', 'Downtown Civic Center', 'Excelsior', 
+    'Financial District', 'Glen Park', 'Golden Gate Park', 'Haight Ashbury', 
+    'Inner Richmond', 'Inner Sunset', 'Lakeshore', 'Marina', 'Mission', 'Nob Hill', 
+    'Noe Valley', 'North Beach', 'Ocean View', 'Outer Mission', 'Outer Richmond', 
+    'Outer Sunset', 'Pacific Heights', 'Parkside', 'Potrero Hill', 'Presidio', 
+    'Presidio Heights', 'Russian Hill', 'Seacliff', 'South of Market', 'Treasure Island YBI', 
+    'Twin Peaks', 'Visitacion Valley', 'West of Twin Peaks', 'Western Addition'
+]
+
+const neighborhoodName = 'Western Addition';
+// Excel file URL
+const url = 'https://s3.amazonaws.com/sfplanning/maps/NeighborhoodGroupList.xlsx';
+
+getOrganizationsByNeighborhood(url, neighborhoodName)
+  .then(organizations => {
+    console.log(organizations);
+  })
+  .catch(error => {
+    console.error("Error fetching or processing the Excel file:", error);
+  });
 
 
 async function main() {
@@ -303,7 +346,7 @@ async function main() {
 	});
 }
 
-main()
+// main()
 
 function toFetchUrl(url) {
 	if (url.startsWith("//") ||
