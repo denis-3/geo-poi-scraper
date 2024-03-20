@@ -269,6 +269,175 @@ async function getEvents(city = "san-francisco") {
 
 // getEvents()
 
+// Local news function by neighborhood
+async function getLocalNews(neighborhood) {
+	console.log("starting getLocalNews...");
+	const browser = await puppeteer.launch();
+
+	// See https://www.reddit.com/r/AskSF/comments/16busau/new_to_sf_best_local_newspapers/ for inspiration
+	// Add News outlets? Might not be the right place if the goal is to do local news by neighborhood, although it is possible
+	// ABC7 News San Francisco
+	// SFist
+	// Hoodline
+
+	const neighborhoodNews = {
+		"marina": {
+			rootUrl: "https://www.marinatimes.com/category/news",
+		},
+		"richmond": {
+			rootUrl: "https://richmondsunsetnews.com/"
+		},
+		"sunset": {
+			rootUrl: "https://richmondsunsetnews.com/"
+		},
+		"ingleside": {
+			rootUrl: "https://www.inglesidelight.com/latest/"
+		}, 
+		"mission": {
+			rootUrl: "https://missionlocal.org/category/featured/"
+		}
+	}
+
+	const newsPage = await browser.newPage();
+	await newsPage.goto(neighborhoodNews[neighborhood.toLowerCase()].rootUrl, {
+		waitUntil: 'networkidle2'
+	})
+
+	const newsLinks = await newsPage.evaluate(
+		(neighborhood) => {
+			const linkSelectors = {
+				"marina": 'a[class="item container"]',
+				"ingleside": 'a[class="post-card__media"]',
+				"richmond": 'h2[class="posttitle"] > a',
+				"sunset": 'h2[class="posttitle"] > a'
+			};
+			const selector = linkSelectors[neighborhood.toLowerCase()] 
+			return Array.from(
+				document.querySelectorAll(selector),
+				a => a.getAttribute('href')
+			);
+		},
+		neighborhood 
+	);
+
+	console.log("newsLinks: ", newsLinks)
+
+	const newsPages = await browser.newPage();
+	let newsData = [];
+
+	for (const link of newsLinks) {
+		try {
+			console.log("Navigating to:", link);
+
+			await newsPages.goto(link, {
+				waitUntil: "networkidle0",
+				timeout: 60000
+			});
+
+			// Leave this here for testing
+			/* const extractedEventPageData = await newsPages.evaluate((neighborhood) => {
+				console.log(" in extractedEventPageData")
+				let newsArticleObj = {}
+				newsArticleObj['category'] = '' || document.querySelector('a[class="post-lead-category"]').innerText;
+				newsArticleObj['author'] = '' || document.querySelector('').innerText;
+				newsArticleObj['date'] = '' || document.querySelector('time.entry-date').innerText;
+				newsArticleObj['title'] = '' || document.querySelector('h1.title').innerText;
+				newsArticleObj['subtitle'] = '' || document.querySelector('p.post-hero__excerpt.text-acc').innerText;
+				newsArticleObj['content'] = '' || Array.from(document.querySelectorAll('section[class="entry"] > p')).map(p => p.innerText);
+				return newsArticleObj;
+			}, neighborhood);
+
+			console.log("extractedEventPageData: ", extractedEventPageData) */
+
+			const extractedEventPageData = await newsPages.evaluate((neighborhood) => {
+				console.log(" in extractedEventPageData")
+				const configs = {
+					"marina": {
+						categorySelector: 'div.category',
+						authorSelector: 'div.author',
+						dateSelector: 'div.date',
+						titleSelector: 'div.left > h1',
+						subtitleSelector: 'div.subtitle',
+						contentSelector: '.content > p'
+					},
+					"ingleside": {
+						categorySelector: 'a[class*="post-tag mr-sm"]',
+						authorSelector: 'span.post-info__authors > a',
+						dateSelector: 'div.post-info > time',
+						titleSelector: 'h1.post-hero__title',
+						subtitleSelector: 'p.post-hero__excerpt.text-acc',
+						contentSelector: 'article[class*="post-access-public"] > p'
+					},
+					"richmond": {
+						categorySelector: 'a[class="post-lead-category"]',
+						// authorSelector: '',
+						dateSelector: 'time.entry-date',
+						titleSelector: 'h1.title',
+						// subtitleSelector: '',
+						contentSelector: 'section[class="entry"] > p'
+					},
+					"sunset": {
+						categorySelector: 'a[class="post-lead-category"]',
+						// authorSelector: '',
+						dateSelector: 'time.entry-date',
+						titleSelector: 'h1.title',
+						// subtitleSelector: '',
+						contentSelector: 'section[class="entry"] > p'
+					},
+				};
+
+				const config = configs[neighborhood.toLowerCase()];
+
+				let newsArticleObj = {}
+
+				newsArticleObj['category'] = '' || document.querySelector(config.categorySelector)?.innerText;
+				newsArticleObj['author'] = '' || document.querySelector(config.authorSelector)?.innerText;
+				newsArticleObj['date'] = '' || document.querySelector(config.dateSelector)?.innerText;
+				newsArticleObj['title'] = '' || document.querySelector(config.titleSelector)?.innerText;
+				newsArticleObj['subtitle'] = '' || document.querySelector(config.subtitleSelector)?.innerText;
+				newsArticleObj['content'] = '' || Array.from(document.querySelectorAll(config.contentSelector))?.map(p => p.innerText);
+
+				return newsArticleObj;
+			}, neighborhood);
+			newsData.push(extractedEventPageData)
+		} catch (error) {
+			console.error(`Error navigating to ${link}:`, error);
+		}
+	}
+	console.log("newsData: ", newsData)
+	await browser.close();
+	return newsData
+}
+
+// getLocalNews("sunset")
+
+// Get Events by Local Neighborhood, this finds neighborhood-specific outlets 
+async function getLocalEvents(neighborhood) {
+	console.log("starting getLocalEvents...");
+	const browser = await puppeteer.launch();
+
+	if (neighborhood.toLowerCase() === "inner sunset") {
+		const sunsetNewsPage = await browser.newPage();
+		await sunsetNewsPage.goto(`https://www.inner-sunset.org/events-2/`, {
+			waitUntil: 'networkidle2'
+		});
+	} else if (neighborhood.toLowerCase() === "cole valley") {
+		const coleValleyNewsPage = await browser.newPage();
+		await coleValleyNewsPage.goto(`http://www.colevalleysf.com/local-happenings.html`, {
+			waitUntil: 'networkidle2'
+		});
+	} else if (neighborhood.toLowerCase() === "nopa") {
+		const nopaNewsPage = await browser.newPage();
+		await nopaNewsPage.goto(`https://www.nopna.org/events`, {
+			waitUntil: 'networkidle2'
+		});
+	}
+}
+
+// getLocalEvents("inner-sunset")
+
+
+
 // Read neighborhood organizations based on neighborhood name
 async function getOrganizationsByNeighborhood(url, neighborhoodName) {
 	const response = await fetch(url);
@@ -300,17 +469,18 @@ const neighborhoodNames = [
     'Twin Peaks', 'Visitacion Valley', 'West of Twin Peaks', 'Western Addition'
 ]
 
-const neighborhoodName = 'Western Addition';
+// const neighborhoodName = 'Western Addition';
 // Excel file URL
-const url = 'https://s3.amazonaws.com/sfplanning/maps/NeighborhoodGroupList.xlsx';
+// const url = 'https://s3.amazonaws.com/sfplanning/maps/NeighborhoodGroupList.xlsx';
 
-getOrganizationsByNeighborhood(url, neighborhoodName)
+
+/* getOrganizationsByNeighborhood(url, neighborhoodName)
   .then(organizations => {
     console.log(organizations);
   })
   .catch(error => {
     console.error("Error fetching or processing the Excel file:", error);
-  });
+  }); */
 
 
 async function main() {
