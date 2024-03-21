@@ -295,6 +295,9 @@ async function getLocalNews(neighborhood) {
 		}, 
 		"mission": {
 			rootUrl: "https://missionlocal.org/category/featured/"
+		},
+		"chinatown": {
+			rootUrl: "https://www.windnewspaper.com/category/chinatown"
 		}
 	}
 
@@ -309,7 +312,8 @@ async function getLocalNews(neighborhood) {
 				"marina": 'a[class="item container"]',
 				"ingleside": 'a[class="post-card__media"]',
 				"richmond": 'h2[class="posttitle"] > a',
-				"sunset": 'h2[class="posttitle"] > a'
+				"sunset": 'h2[class="posttitle"] > a',
+				"mission": 'a[class="post-thumbnail-inner"]'
 			};
 			const selector = linkSelectors[neighborhood.toLowerCase()] 
 			return Array.from(
@@ -384,6 +388,14 @@ async function getLocalNews(neighborhood) {
 						// subtitleSelector: '',
 						contentSelector: 'section[class="entry"] > p'
 					},
+					"mission": {
+						categorySelector: 'span[class="cat-links"] > a',
+						authorSelector: 'span[class="author vcard"] > a',
+						dateSelector: 'time[class="entry-date published"]',
+						titleSelector: 'h1.entry-title ',
+						// subtitleSelector: '',
+						contentSelector: 'div[class="entry-content"] > p'
+					}
 				};
 
 				const config = configs[neighborhood.toLowerCase()];
@@ -409,7 +421,7 @@ async function getLocalNews(neighborhood) {
 	return newsData
 }
 
-// getLocalNews("sunset")
+// getLocalNews("mission")
 
 // Get Events by Local Neighborhood, this finds neighborhood-specific outlets 
 async function getLocalEvents(neighborhood) {
