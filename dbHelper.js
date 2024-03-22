@@ -35,7 +35,6 @@ async function exportCafesToCSV(tableName) {
       {id: "longitude", title: "longitude"},
       {id: "name", title: "name"},
       {id: "address", title: "address"},
-      {id: "_allOsmResults", title: "_allOsmResults"},
       {id: "hours", title: "hours"},
       {id: "price", title: "price"},
       {id: "reviewsWebsite", title: "reviewsWebsite"},
