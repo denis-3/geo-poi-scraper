@@ -24,31 +24,76 @@ async function convertToJSON(tableName) {
   });
 }
 
-
-// const jsonData = convertToJSON(tableName)
-
-async function exportToCSV(tableName) {
+async function exportCafesToCSV(tableName) {
   const csvWriter = createCsvWriter({
-    path: "geo-poi-scraper.csv",
+    path: "cafes.csv",
     header: [
-      { id: "rowid", title: "rowid" },
-      { id: "object", title: "object" },
-      { id: "attribute", title: "attribute" },
-      { id: "value", title: "value" },
-      { id: "attributetype", title: "attributetype" }
+      {id: "id", title: "id"},
+      {id: "type", title: "type"},
+      {id: "website", title: "website"},
+      {id: "lattitude", title: "lattitude"},
+      {id: "longitude", title: "longitude"},
+      {id: "name", title: "name"},
+      {id: "address", title: "address"},
+      {id: "_allOsmResults", title: "_allOsmResults"},
+      {id: "hours", title: "hours"},
+      {id: "price", title: "price"},
+      {id: "reviewsWebsite", title: "reviewsWebsite"},
+      {id: "amenities", title: "amenities"}
     ]
   });
 
-  const jsonData = await convertToJSON(tableName).then((res) => {
-    // console.log("res: ", res)
-    csvWriter.writeRecords(res).then(() =>
-      console.log("Write to geo-poi-scraper.csv successfully!")
-    );
-  })
+  const jsonData = await convertToJSON(tableName);
+  const cafesData = jsonData.filter(item => item.attribute === 'type' && item.value === 'cafe').map(item => ({id: item.object}));
+
+  jsonData.forEach(item => {
+    if (cafesData.find(cafe => cafe.id === item.object)) {
+      cafesData.find(cafe => cafe.id === item.object)[item.attribute] = item.value;
+    }
+  });
+
+  csvWriter.writeRecords(cafesData)
+    .then(() => console.log("Generated cafes.csv successfully!"))
+    .catch(err => console.error("Error writing CSV for cafes", err));
 }
 
-exportToCSV(tableName)
+exportCafesToCSV(tableName)
 
+async function exportEventsToCSV(tableName) {
+  const csvWriter = createCsvWriter({
+    path: "events.csv",
+    header: [
+      {id: "id", title: "id"},
+      {id: "type", title: "type"},
+      {id: "startDate", title: "startDate"},
+      {id: "endDate", title: "endDate"},
+      {id: "name", title: "name"},
+      {id: "url", title: "url"},
+      {id: "image", title: "image"},
+      {id: "description", title: "description"},
+      {id: "locationName", title: "locationName"},
+      {id: "locationAddress", title: "locationAddress"},
+      {id: "organizerName", title: "organizerName"}
+    ]
+  });
+
+  const jsonData = await convertToJSON(tableName);
+  const eventsData = jsonData
+    .filter(item => item.attribute === 'type' && item.value === 'event')
+    .map(item => ({id: item.object}));
+
+  jsonData.forEach(item => {
+    if (eventsData.find(event => event.id === item.object)) {
+      eventsData.find(event => event.id === item.object)[item.attribute] = item.value;
+    }
+  });
+
+  csvWriter.writeRecords(eventsData)
+    .then(() => console.log("Generated events.csv successfully!"))
+    .catch(err => console.error("Error writing CSV for events", err));
+}
+
+exportEventsToCSV(tableName)
 
 async function viewTableContent(tableName) {
   await withDbClient(async (client) => {
