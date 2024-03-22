@@ -232,9 +232,9 @@ async function getEvents(city = "san-francisco") {
 					url: "url",
 					image: "url-img",
 					description: "string",
-					locationName: "string",
+					locationName: "place",
 					locationAddress: "address",
-					organizerName: "string",
+					organizerName: "project",
 				}
 			}
 			// concatenate some relevant paramaters to uniquely distinguish event
@@ -267,7 +267,7 @@ async function getEvents(city = "san-francisco") {
 	return meetupEventData
 }
 
-// getEvents()
+//getEvents()
 
 // Local news function by neighborhood
 async function getLocalNews(neighborhood) {
@@ -528,7 +528,7 @@ async function main() {
 	});
 }
 
-// main()
+main()
 
 function toFetchUrl(url) {
 	if (url.startsWith("//") ||
