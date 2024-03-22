@@ -1,4 +1,54 @@
 const withDbClient = require('./dbClient');
+const createCsvWriter = require("csv-writer").createObjectCsvWriter;
+
+// This is the tableName
+const tableName = 'poidata';
+if (!tableName) {
+  process.exit(1);
+}
+
+async function convertToJSON(tableName) {
+  return new Promise(async (resolve, reject) => {
+    await withDbClient(async (client) => {
+      try {
+        const res = await client.query(`SELECT * FROM ${tableName};`);
+        console.log(`Contents of the ${tableName} table:`);
+        const jsonData = JSON.parse(JSON.stringify(res.rows));
+        resolve(jsonData);
+      } catch (err) {
+        console.log("err message: ", err.message);
+        console.error("Error running query", err.stack);
+        reject(err); 
+      }
+    });
+  });
+}
+
+
+// const jsonData = convertToJSON(tableName)
+
+async function exportToCSV(tableName) {
+  const csvWriter = createCsvWriter({
+    path: "geo-poi-scraper.csv",
+    header: [
+      { id: "rowid", title: "rowid" },
+      { id: "object", title: "object" },
+      { id: "attribute", title: "attribute" },
+      { id: "value", title: "value" },
+      { id: "attributetype", title: "attributetype" }
+    ]
+  });
+
+  const jsonData = await convertToJSON(tableName).then((res) => {
+    // console.log("res: ", res)
+    csvWriter.writeRecords(res).then(() =>
+      console.log("Write to geo-poi-scraper.csv successfully!")
+    );
+  })
+}
+
+exportToCSV(tableName)
+
 
 async function viewTableContent(tableName) {
   await withDbClient(async (client) => {
@@ -26,12 +76,6 @@ async function resetPoiDataTable() {
 	})
 }
 
-// This is the tableName
-const tableName = 'poidata';
-if (!tableName) {
-  process.exit(1);
-}
-
 async function getObjectAttributesByUuid(uuid) {
   await withDbClient(async (client) => {
     try {
@@ -53,7 +97,7 @@ async function getObjectAttributesByUuid(uuid) {
   });
 }
 
-getObjectAttributesByUuid('787123fc-4150-4c94-b4a9-0cf821f9b9b1').then(data => console.log(data));
+// getObjectAttributesByUuid('787123fc-4150-4c94-b4a9-0cf821f9b9b1').then(data => console.log(data));
 
 async function findEntityIdByCriteria(type, locationName, nameContains) {
   await withDbClient(async (client) => {
@@ -86,7 +130,7 @@ async function findEntityIdByCriteria(type, locationName, nameContains) {
   });
 }
 
-findEntityIdByCriteria('event', 'The Savoy Tivoli', 'Legal Hackers Happy Hour');
+// findEntityIdByCriteria('event', 'The Savoy Tivoli', 'Legal Hackers Happy Hour');
 
 
 // viewTableContent(tableName);

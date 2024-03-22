@@ -3,7 +3,6 @@ require('dotenv').config()
 const withDbClient = require('./dbClient');
 const puppeteer = require('puppeteer');
 const uuid = require("uuid")
-const XLSX = require('xlsx');
 
 const OPA_API_URL = process.env.OPA_API_URL
 
