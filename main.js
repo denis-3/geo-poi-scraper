@@ -170,16 +170,12 @@ async function getEvents(city = "san-francisco") {
 		)
 	);
 
-	// console.log("eventBriteLinks: ", eventBriteLinks)
-
 	const meetupLinks = await meetupPage.evaluate(
 		() => Array.from(
 			document.querySelectorAll('a[id="event-card-in-search-results"]'),
 			a => a.getAttribute('href')
 		)
 	);
-
-	// console.log(meetupLinks);
 
 	let compiledEventLinks = [...eventBriteLinks, ...meetupLinks]
 
@@ -202,7 +198,7 @@ async function getEvents(city = "san-francisco") {
 
 			await eventsPages.goto(link, {
 				waitUntil: "networkidle0",
-				timeout: 60000
+				timeout: 30000
 			});
 
 			const extractedEventPageData = await eventsPages.evaluate(() => {
@@ -258,15 +254,11 @@ async function getEvents(city = "san-francisco") {
 
 	console.log("meetupEventData: ", meetupEventData)
 
-	// TODOs:
-	// 1. Find increases in efficiency, check if there are cases where Puppeteer gets blocked
-	// TODO: Include event series data?
-
 	await browser.close();
 	return meetupEventData
 }
 
-//getEvents()
+// getEvents()
 
 // Local news function by neighborhood
 async function getLocalNews(neighborhood) {
@@ -352,7 +344,7 @@ async function getLocalNews(neighborhood) {
 
 			console.log("extractedEventPageData: ", extractedEventPageData) */
 
-			const extractedEventPageData = await newsPages.evaluate((neighborhood) => {
+			const extractedEventPageData = await newsPages.evaluate((neighborhood, link) => {
 				console.log(" in extractedEventPageData")
 				const configs = {
 					"marina": {
@@ -399,53 +391,42 @@ async function getLocalNews(neighborhood) {
 
 				const config = configs[neighborhood.toLowerCase()];
 
-				let newsArticleObj = {}
-
-				newsArticleObj['category'] = '' || document.querySelector(config.categorySelector)?.innerText;
-				newsArticleObj['author'] = '' || document.querySelector(config.authorSelector)?.innerText;
-				newsArticleObj['date'] = '' || document.querySelector(config.dateSelector)?.innerText;
-				newsArticleObj['title'] = '' || document.querySelector(config.titleSelector)?.innerText;
-				newsArticleObj['subtitle'] = '' || document.querySelector(config.subtitleSelector)?.innerText;
-				newsArticleObj['content'] = '' || Array.from(document.querySelectorAll(config.contentSelector))?.map(p => p.innerText);
-
+				let newsArticleObj = {
+					type: 'news',
+					neighborhood: neighborhood,
+					category: '' || document.querySelector(config.categorySelector)?.innerText,
+					author: '' || document.querySelector(config.authorSelector)?.innerText,
+					date: '' || document.querySelector(config.dateSelector)?.innerText,
+					title: '' || document.querySelector(config.titleSelector)?.innerText,
+					subtitle: '' || document.querySelector(config.subtitleSelector)?.innerText,
+					content: '' || Array.from(document.querySelectorAll(config.contentSelector))
+						.map(p => p.innerText)
+  						.join('<br><br>'),
+					url: link,
+					_attrTypes: {
+						type: "type",
+						neighborhood: "string",
+						category: "string",
+						author: "string",
+						date: "date",
+						title: "string",
+						subtitle: "string",
+						content: "content",
+						url: "string",
+					}
+				}
 				return newsArticleObj;
-			}, neighborhood);
+			}, neighborhood, link);
 			newsData.push(extractedEventPageData)
 		} catch (error) {
 			console.error(`Error navigating to ${link}:`, error);
 		}
 	}
-	console.log("newsData: ", newsData)
 	await browser.close();
 	return newsData
 }
 
 // getLocalNews("mission")
-
-// Get Events by Local Neighborhood, this finds neighborhood-specific outlets 
-async function getLocalEvents(neighborhood) {
-	console.log("starting getLocalEvents...");
-	const browser = await puppeteer.launch();
-
-	if (neighborhood.toLowerCase() === "inner sunset") {
-		const sunsetNewsPage = await browser.newPage();
-		await sunsetNewsPage.goto(`https://www.inner-sunset.org/events-2/`, {
-			waitUntil: 'networkidle2'
-		});
-	} else if (neighborhood.toLowerCase() === "cole valley") {
-		const coleValleyNewsPage = await browser.newPage();
-		await coleValleyNewsPage.goto(`http://www.colevalleysf.com/local-happenings.html`, {
-			waitUntil: 'networkidle2'
-		});
-	} else if (neighborhood.toLowerCase() === "nopa") {
-		const nopaNewsPage = await browser.newPage();
-		await nopaNewsPage.goto(`https://www.nopna.org/events`, {
-			waitUntil: 'networkidle2'
-		});
-	}
-}
-
-// getLocalEvents("inner-sunset")
 
 async function main() {
 	// targeted amenities for generic scraping
@@ -459,6 +440,16 @@ async function main() {
 		"bank",
 	]
 	const finalResults = []
+
+	const neighborhoods = ["marina", "ingleside", "mission", "richmond", "sunset"]
+
+	let neighborhoodNews;
+	for (neighborhood in neighborhoods) {
+		neighborhoodNews = await getLocalNews(neighborhoods[neighborhood])
+		finalResults.push(...neighborhoodNews)
+	}
+
+	console.log("finalResults: ", finalResults)
 
 	const cafeResults = await getCafeAmenities()
 	const eventResults = await getEvents()
@@ -480,7 +471,7 @@ async function main() {
 	});
 }
 
-// main()
+main()
 
 function toFetchUrl(url) {
 	if (url.startsWith("//") ||

@@ -7,6 +7,24 @@ if (!tableName) {
   process.exit(1);
 }
 
+function prepareContentForCsv(content) {
+  if (typeof content !== 'string') {
+    return '';
+  }
+  // Replace <br><br> with \n for newlines in the CSV content
+  let csvContent = content.replace(/<br><br>/g, '\n');
+
+  // Escape double quotes by doubling them
+  csvContent = csvContent.replace(/"/g, '""');
+
+  // Enclose the content with double quotes if it contains newlines, commas, or double quotes
+  if (csvContent.includes('\n') || csvContent.includes(',') || csvContent.includes('"')) {
+    csvContent = `"${csvContent}"`;
+  }
+
+  return csvContent;
+}
+
 async function convertToJSON(tableName) {
   return new Promise(async (resolve, reject) => {
     await withDbClient(async (client) => {
@@ -56,7 +74,7 @@ async function exportCafesToCSV(tableName) {
     .catch(err => console.error("Error writing CSV for cafes", err));
 }
 
-exportCafesToCSV(tableName)
+// exportCafesToCSV(tableName)
 
 async function exportEventsToCSV(tableName) {
   const csvWriter = createCsvWriter({
@@ -92,7 +110,66 @@ async function exportEventsToCSV(tableName) {
     .catch(err => console.error("Error writing CSV for events", err));
 }
 
-exportEventsToCSV(tableName)
+//exportEventsToCSV(tableName)
+
+async function exportLocalNewsToCSV(tableName) {
+  const csvWriter = createCsvWriter({
+    path: "localNews.csv",
+    header: [
+      {id: "id", title: "id"},
+      {id: "type", title: "type"},
+      {id: "neighborhood", title: "neighborhood"},
+      {id: "category", title: "category"},
+      {id: "author", title: "author"},
+      {id: "date", title: "date"},
+      {id: "title", title: "title"},
+      {id: "subtitle", title: "subtitle"},
+      {id: "content", title: "content"},
+      {id: "url", title: "url"}
+    ]
+  });
+
+  const jsonData = await convertToJSON(tableName);
+
+  const newsData = jsonData
+    .filter(item => item.attribute === 'type' && item.value === 'news')
+    .map(item => ({id: item.object}));
+
+  jsonData.forEach(item => {
+    if (newsData.find(news => news.id === item.object)) {
+      newsData.find(news => news.id === item.object)[item.attribute] = item.value;
+    }
+  });
+
+  csvWriter.writeRecords(newsData)
+    .then(() => console.log("Generated localNews.csv successfully!"))
+    .catch(err => console.error("Error writing CSV for local news", err));
+
+}
+
+// exportLocalNewsToCSV(tableName)
+
+// To be used in future to convert content of local news to a more readable format
+function convertCsvContentToReadableFormat(csvContent) {
+  // Strip off the leading and trailing quote characters and curly braces
+  let contentWithoutQuotes = csvContent.slice(2, -2);
+  
+  // Replace the sequence `","` with `<br><br>`
+  let contentWithBreaks = contentWithoutQuotes.replace(/"",""/g, '<br><br>');
+  
+  // Replace the double double-quotes with single double-quotes
+  let readableContent = contentWithBreaks.replace(/""/g, '"');
+  
+  return readableContent;
+}
+
+// const csvContent = `"{""A contentious meeting about the harbor brought out a bevy of boats but no board. District 2 Supervisor Catherine Stefani recused herself from representation because her husband owns a boat in the marina. The grassroots group “Keep The Waterfront Open” collected more than 2,500 signatures opposing plans that would remove boats located at Gashouse Cove — part of the Marina Small Craft Harbor since the 1960s — so that PG&E can “decontaminate the water.” Along with removal of the wooden slips and the only public fuel dock in town, the view of bobbing masts would be gone forever."",""Critics say the plan is really about the San Francisco Recreation and Park Department’s desire to accommodate much larger yachts, which would further restrict views from the Marina Green but would increase revenue flow to the agency, all while allowing PG&E to save millions by doing a less than adequate cleanup of its toxins under the water of the adjacent Gashouse Cove."",""With Stefani abstaining, the city charter says “the privilege of the floor shall not be granted, for any purpose, to persons other than officers of the City or their duly authorized representatives. This rule shall not be suspended except by unanimous consent of all Supervisors present,” which leaves residents without representation from their elected supervisor."",""At an Oct. 19 meeting, Rec and Park voted to move forward with an environmental impact review for the proposed plan, despite local opposition."}"`;
+
+// let readableContent = convertCsvContentToReadableFormat(csvContent);
+
+// console.log(readableContent);
+
+
 
 async function viewTableContent(tableName) {
   await withDbClient(async (client) => {
