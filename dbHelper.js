@@ -74,7 +74,7 @@ async function exportCafesToCSV(tableName) {
     .catch(err => console.error("Error writing CSV for cafes", err));
 }
 
-// exportCafesToCSV(tableName)
+exportCafesToCSV(tableName)
 
 async function exportEventsToCSV(tableName) {
   const csvWriter = createCsvWriter({
@@ -110,7 +110,7 @@ async function exportEventsToCSV(tableName) {
     .catch(err => console.error("Error writing CSV for events", err));
 }
 
-//exportEventsToCSV(tableName)
+exportEventsToCSV(tableName)
 
 async function exportLocalNewsToCSV(tableName) {
   const csvWriter = createCsvWriter({
@@ -147,7 +147,7 @@ async function exportLocalNewsToCSV(tableName) {
 
 }
 
-// exportLocalNewsToCSV(tableName)
+exportLocalNewsToCSV(tableName)
 
 // To be used in future to convert content of local news to a more readable format
 function convertCsvContentToReadableFormat(csvContent) {
@@ -168,8 +168,6 @@ function convertCsvContentToReadableFormat(csvContent) {
 // let readableContent = convertCsvContentToReadableFormat(csvContent);
 
 // console.log(readableContent);
-
-
 
 async function viewTableContent(tableName) {
   await withDbClient(async (client) => {

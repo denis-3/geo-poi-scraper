@@ -106,6 +106,7 @@ async function getCafeAmenities() {
 	}
 	return cafeResults
 }
+// getCafeAmenities()
 
 async function getGenericAmenity(amenityType) {
 	const osmResults = await getPoisFromOverpass(amenityType)
@@ -411,7 +412,7 @@ async function getLocalNews(neighborhood) {
 						date: "date",
 						title: "string",
 						subtitle: "string",
-						content: "content",
+						content: "string",
 						url: "string",
 					}
 				}
