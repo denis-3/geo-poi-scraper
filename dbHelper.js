@@ -36,7 +36,7 @@ async function convertToJSON(tableName) {
       } catch (err) {
         console.log("err message: ", err.message);
         console.error("Error running query", err.stack);
-        reject(err); 
+        reject(err);
       }
     });
   });
@@ -73,8 +73,6 @@ async function exportCafesToCSV(tableName) {
     .then(() => console.log("Generated cafes.csv successfully!"))
     .catch(err => console.error("Error writing CSV for cafes", err));
 }
-
-exportCafesToCSV(tableName)
 
 async function exportEventsToCSV(tableName) {
   const csvWriter = createCsvWriter({
@@ -153,13 +151,13 @@ exportLocalNewsToCSV(tableName)
 function convertCsvContentToReadableFormat(csvContent) {
   // Strip off the leading and trailing quote characters and curly braces
   let contentWithoutQuotes = csvContent.slice(2, -2);
-  
+
   // Replace the sequence `","` with `<br><br>`
   let contentWithBreaks = contentWithoutQuotes.replace(/"",""/g, '<br><br>');
-  
+
   // Replace the double double-quotes with single double-quotes
   let readableContent = contentWithBreaks.replace(/""/g, '"');
-  
+
   return readableContent;
 }
 
@@ -200,7 +198,7 @@ async function getObjectAttributesByUuid(uuid) {
     try {
       const queryStr = 'SELECT attribute, value, attributeType FROM poiData WHERE object = $1;';
       const res = await client.query(queryStr, [uuid]);
-      
+
       if (res.rows.length === 0) {
         console.log('No data found for the given UUID.');
         return null;
@@ -237,7 +235,7 @@ async function findEntityIdByCriteria(type, locationName, nameContains) {
 
       if (res.rows.length > 0) {
         console.log(`Found entity. Object ID: ${res.rows[0].object}`);
-        return res.rows[0].object; 
+        return res.rows[0].object;
       } else {
         console.log('No entities found matching the criteria.');
         return null;
@@ -254,3 +252,5 @@ async function findEntityIdByCriteria(type, locationName, nameContains) {
 
 // viewTableContent(tableName);
 // resetPoiDataTable()
+// exportEventsToCSV(tableName)
+// exportCafesToCSV(tableName)

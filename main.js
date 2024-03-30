@@ -48,7 +48,7 @@ async function getCafeAmenities() {
 
 			const yelpSearchText = await yelpSearchFetch.text()
 			var yelpHtml = cheerio.load(yelpSearchText)
-			const bizYelpLink = yelpHtml("span.css-1egxyvc a").attr("href")
+			const bizYelpLink = yelpHtml("h3 > a").attr("href")
 
 			// get business yelp page
 			const yelpDataFetch = await fetchWithTimeout(fetch(`https://www.yelp.com${bizYelpLink}`), 7500)
@@ -284,7 +284,7 @@ async function getLocalNews(neighborhood) {
 		},
 		"ingleside": {
 			rootUrl: "https://www.inglesidelight.com/latest/"
-		}, 
+		},
 		"mission": {
 			rootUrl: "https://missionlocal.org/category/featured/"
 		},
@@ -307,13 +307,13 @@ async function getLocalNews(neighborhood) {
 				"sunset": 'h2[class="posttitle"] > a',
 				"mission": 'a[class="post-thumbnail-inner"]'
 			};
-			const selector = linkSelectors[neighborhood.toLowerCase()] 
+			const selector = linkSelectors[neighborhood.toLowerCase()]
 			return Array.from(
 				document.querySelectorAll(selector),
 				a => a.getAttribute('href')
 			);
 		},
-		neighborhood 
+		neighborhood
 	);
 
 	console.log("newsLinks: ", newsLinks)
@@ -429,6 +429,31 @@ async function getLocalNews(neighborhood) {
 
 // getLocalNews("mission")
 
+// Get Events by Local Neighborhood, this finds neighborhood-specific outlets
+async function getLocalEvents(neighborhood) {
+	console.log("starting getLocalEvents...");
+	const browser = await puppeteer.launch();
+
+	if (neighborhood.toLowerCase() === "inner sunset") {
+		const sunsetNewsPage = await browser.newPage();
+		await sunsetNewsPage.goto(`https://www.inner-sunset.org/events-2/`, {
+			waitUntil: 'networkidle2'
+		});
+	} else if (neighborhood.toLowerCase() === "cole valley") {
+		const coleValleyNewsPage = await browser.newPage();
+		await coleValleyNewsPage.goto(`http://www.colevalleysf.com/local-happenings.html`, {
+			waitUntil: 'networkidle2'
+		});
+	} else if (neighborhood.toLowerCase() === "nopa") {
+		const nopaNewsPage = await browser.newPage();
+		await nopaNewsPage.goto(`https://www.nopna.org/events`, {
+			waitUntil: 'networkidle2'
+		});
+	}
+}
+
+// getLocalEvents("inner-sunset")
+
 async function main() {
 	// targeted amenities for generic scraping
 	// this is just a start, more can be added
@@ -459,13 +484,16 @@ async function main() {
 
 	// get generic amenities (it takes a bit)
 	// for (var i = 0; i < targetAmenities.length; i++) {
-	// 	const genResults = await getGenericAmenity(targetAmenities)
+	// 	const genResults = await getGenericAmenity(targetAmenities[i])
 	// 	finalResults.push(...genResults)
 	// }
 
 	console.log(finalResults)
 
+	// data can be just pushed to remote, or synced with it
 	withDbClient(async (dbConfig) => {
+		// await syncWithRemote(finalResults, dbConfig)
+
 		for (let i = 0; i < finalResults.length; i++) {
 			await saveToPostgres(finalResults[i], dbConfig);
 		}
@@ -574,3 +602,65 @@ async function saveToPostgres(dataObj, client) {
 	  }
 	}
   }
+
+async function syncWithRemote(dataObj, client) {
+	dataObj = JSON.parse(JSON.stringify(dataObj))
+	const remoteClientCall = await client.query("SELECT * FROM poiData")
+	const remoteData = {}
+	remoteClientCall.rows.forEach(row => {
+		if (remoteData[row.object] === undefined) {
+			remoteData[row.object] = {}
+		}
+		remoteData[row.object][row.attribute] = row.value
+	});
+
+	// mapping from these random uuid's in memory to uuid's in remote
+	const thisToRemoteKey = {}
+
+	// event processing will come later...
+	for (const tKey in dataObj) {
+		if (dataObj[tKey].type == "event") {
+			delete dataObj[tKey]
+			continue
+		}
+
+		// make unique fingerprint for each poi based on poidata
+		const thisObjPrint = dataObj[tKey].name + dataObj[tKey].lattitude + dataObj[tKey].longitude
+		for (const rKey in remoteData) {
+			const remoteObjPrint = remoteData[rKey].name + remoteData[rKey].lattitude + remoteData[rKey].longitude
+			if (remoteObjPrint == thisObjPrint) {
+				thisToRemoteKey[tKey] = rKey
+				// see what data differs between local and remote
+				for (const propKey in dataObj[tKey]) {
+					//remove underscore'd properties
+					if (propKey.startsWith("_")) {
+						delete dataObj[tKey][propKey]
+						continue
+					}
+
+					const tProperty = typeof dataObj[tKey][propKey] == "object" ?
+						JSON.stringify(dataObj[tKey][propKey]) :
+						String(dataObj[tKey][propKey])
+
+					const rProperty = typeof remoteData[rKey][propKey] == "object" ?
+						JSON.stringify(remoteData[rKey][propKey]) :
+						String(remoteData[rKey][propKey])
+
+					// if the two relevant keys are the same then remove them from net changes
+					if (tProperty === rProperty || (tProperty == "null" && rProperty == "undefined")) {
+						delete dataObj[tKey][propKey]
+					}
+				}
+			}
+		}
+	}
+
+	// todo: add the case where there is a new attribute to be added rather than just updating
+	for (var i = 0; i < dataObj.length; i++) {
+		if (JSON.stringify(dataObj[i]) == "{}") continue
+		for (const key in dataObj[i]) {
+			const queryStr = "UPDATE poiData SET value = $1 WHERE object = $2 AND attribute = $3";
+			await client.query(queryStr, [dataObj[i][key], thisToRemoteKey[i], key]);
+		}
+	}
+}
