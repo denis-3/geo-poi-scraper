@@ -108,8 +108,6 @@ async function exportEventsToCSV(tableName) {
     .catch(err => console.error("Error writing CSV for events", err));
 }
 
-exportEventsToCSV(tableName)
-
 async function exportLocalNewsToCSV(tableName) {
   const csvWriter = createCsvWriter({
     path: "localNews.csv",
@@ -144,8 +142,6 @@ async function exportLocalNewsToCSV(tableName) {
     .catch(err => console.error("Error writing CSV for local news", err));
 
 }
-
-exportLocalNewsToCSV(tableName)
 
 // To be used in future to convert content of local news to a more readable format
 function convertCsvContentToReadableFormat(csvContent) {

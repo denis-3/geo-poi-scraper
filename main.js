@@ -467,20 +467,20 @@ async function main() {
 	]
 	const finalResults = []
 
-	const neighborhoods = ["marina", "ingleside", "mission", "richmond", "sunset"]
-
-	let neighborhoodNews;
-	for (neighborhood in neighborhoods) {
-		neighborhoodNews = await getLocalNews(neighborhoods[neighborhood])
-		finalResults.push(...neighborhoodNews)
-	}
+	// const neighborhoods = ["marina", "ingleside", "mission", "richmond", "sunset"]
+	//
+	// let neighborhoodNews;
+	// for (neighborhood in neighborhoods) {
+	// 	neighborhoodNews = await getLocalNews(neighborhoods[neighborhood])
+	// 	finalResults.push(...neighborhoodNews)
+	// }
 
 	console.log("finalResults: ", finalResults)
 
 	const cafeResults = await getCafeAmenities()
-	const eventResults = await getEvents()
+	// const eventResults = await getEvents()
 
-	finalResults.push(...cafeResults, ...eventResults)
+	finalResults.push(...cafeResults)
 
 	// get generic amenities (it takes a bit)
 	// for (var i = 0; i < targetAmenities.length; i++) {
@@ -492,11 +492,11 @@ async function main() {
 
 	// data can be just pushed to remote, or synced with it
 	withDbClient(async (dbConfig) => {
-		// await syncWithRemote(finalResults, dbConfig)
+		await syncWithRemote(finalResults, dbConfig)
 
-		for (let i = 0; i < finalResults.length; i++) {
-			await saveToPostgres(finalResults[i], dbConfig);
-		}
+		// for (let i = 0; i < finalResults.length; i++) {
+		// 	await saveToPostgres(finalResults[i], dbConfig);
+		// }
 	});
 }
 
@@ -632,12 +632,6 @@ async function syncWithRemote(dataObj, client) {
 				thisToRemoteKey[tKey] = rKey
 				// see what data differs between local and remote
 				for (const propKey in dataObj[tKey]) {
-					//remove underscore'd properties
-					if (propKey.startsWith("_")) {
-						delete dataObj[tKey][propKey]
-						continue
-					}
-
 					const tProperty = typeof dataObj[tKey][propKey] == "object" ?
 						JSON.stringify(dataObj[tKey][propKey]) :
 						String(dataObj[tKey][propKey])
@@ -659,8 +653,15 @@ async function syncWithRemote(dataObj, client) {
 	for (var i = 0; i < dataObj.length; i++) {
 		if (JSON.stringify(dataObj[i]) == "{}") continue
 		for (const key in dataObj[i]) {
+			// don't update underscore'd keys
+			if (key.startsWith("_")) continue
+
 			const queryStr = "UPDATE poiData SET value = $1 WHERE object = $2 AND attribute = $3";
-			await client.query(queryStr, [dataObj[i][key], thisToRemoteKey[i], key]);
+			const result = await client.query(queryStr, [dataObj[i][key], thisToRemoteKey[i], key]);
+			if (result.rowCount == 0) {
+				const newQueryStr = "INSERT INTO poiData(object, attribute, value, attributeType) VALUES($1, $2, $3, $4)";
+				await client.query(newQueryStr, [thisToRemoteKey[i], key, dataObj[i][key], dataObj[i]._attrTypes[key]]);
+			}
 		}
 	}
 }
