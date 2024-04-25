@@ -1,5 +1,6 @@
 const withDbClient = require('./dbClient');
 const createCsvWriter = require("csv-writer").createObjectCsvWriter;
+const fs = require("fs")
 
 // This is the tableName
 const tableName = 'poidata';
@@ -72,6 +73,21 @@ async function exportCafesToCSV(tableName) {
   csvWriter.writeRecords(cafesData)
     .then(() => console.log("Generated cafes.csv successfully!"))
     .catch(err => console.error("Error writing CSV for cafes", err));
+}
+
+async function exportTableToCsv(tableName, exportPath) {
+	fs.writeFileSync(exportPath, "Object,Attribute,Value,AttributeType\n")
+	await withDbClient(async (client) => {
+		const req1 = await client.query(`SELECT * FROM ${tableName}_rowid_seq`);
+		const rowCount = Number(req1.rows[0].last_value)
+		console.log("total row count to export", rowCount)
+		for (var i = 1; i <= rowCount; i++) {
+			const rowReq = await client.query(`SELECT * FROM ${tableName} WHERE rowid=${i}`);
+			const rowData = rowReq.rows?.[0]
+			if (rowData == undefined) continue
+			fs.appendFileSync(exportPath, `${rowData.object},${rowData.attribute},"${rowData.value.replaceAll(`"`, `""`)}",${rowData.attributetype}\n`)
+		}
+    });
 }
 
 async function exportEventsToCSV(tableName) {
@@ -250,3 +266,4 @@ async function findEntityIdByCriteria(type, locationName, nameContains) {
 // resetPoiDataTable()
 // exportEventsToCSV(tableName)
 // exportCafesToCSV(tableName)
+// exportTableToCsv(tableName, "./testing.csv")

@@ -1,10 +1,128 @@
 const cheerio = require('cheerio');
 require('dotenv').config()
-const withDbClient = require('./dbClient');
+const withDbClient = require("./dbClient");
+const getGeoAttrId = require("./geo-attrs-map.js")
 const puppeteer = require('puppeteer');
 const uuid = require("uuid")
+const fs = require("fs")
 
 const OPA_API_URL = process.env.OPA_API_URL
+
+async function getPoisFromOverpass(poiType) {
+	const initialQuery = await fetch(OPA_API_URL, {
+		method: "POST",
+		body: "data=" + encodeURIComponent(`
+		[out:json]
+		[timeout:90]
+		[maxsize:1000000]
+		;
+		node(37.71044257039148,-122.52330780029298,37.80647004655113,-122.34684155555281)
+		[amenity=${poiType}];
+		out;`)
+	})
+	if (!initialQuery.ok) {
+		const result = await initialQuery.text()
+		return;
+	}
+	const result = await initialQuery.json()
+	return result.elements.filter(x => x?.tags?.website !== undefined).slice(0, 10)
+}
+
+async function ddgPoiFetch(poiName) {
+	const ddgDataFetch = await fetchWithTimeout(
+		fetch("https://duckduckgo.com/local.js?l=us-en&q=" + encodeURIComponent(poiName + " san francisco")), 5000)
+	const ddgData = await ddgDataFetch.json()
+	if (ddgDataFetch.ok == false) {
+		throw Error("Invalid status code")
+	} else if (ddgData.signal !== "high") {
+		throw Error("Signal was not high")
+	}
+	return ddgData.results[0]
+}
+
+async function getGenericAmenity(amenityType, tryYelpSearch = true) {
+	const osmResults = await getPoisFromOverpass(amenityType)
+	if (osmResults === undefined) {
+		console.error("Error!!")
+		return
+	}
+	const formattedResults = []
+
+	for (var _i = 0; _i < osmResults.length; _i++) {
+		const e = osmResults[_i]
+
+		var businessDesc = undefined
+		var ddgData = {}
+		try {
+			console.log("Getting information for business (", i, ")", e.tags.name)
+
+			// get data from ddg widget
+			ddgData = await ddgPoiFetch(e.tags.name)
+
+			businessDesc = ddgData.embed?.description
+
+			var bizYelpLink = ddgData.url
+			// search for business on yelp if needed (tripadvisor doesnt have business description)
+			if (!bizYelpLink?.includes("yelp.com")) {
+				const yelpSearchFetch = await fetchWithTimeout(fetch(`
+					https://www.yelp.com/search?find_desc=${encodeURIComponent(e.tags.name)}&find_loc=&l=g%3A-122.3473745587771%2C37.873881200886444%2C-122.54787504705835%2C37.65050533338459
+				`), 7500)
+
+				const yelpSearchText = await yelpSearchFetch.text()
+				var yelpHtml = cheerio.load(yelpSearchText)
+				bizYelpLink = "https://www.yelp.com" + yelpHtml("h3 > a").attr("href")
+			} else {
+				bizYelpLink = bizYelpLink.replace("http://", "https://www.")
+			}
+
+			// get business yelp page
+			const yelpDataFetch = await fetchWithTimeout(fetch(bizYelpLink), 7500)
+			const yelpDataText = await yelpDataFetch.text()
+			const yelpDataHtml = cheerio.load(yelpDataText)
+
+			// SEO meta tags are useful to get information
+			const yelpPageTitle = normalizeBizName(yelpDataHtml("meta[property='og:title']").attr("content"))
+			if (ddgData.url?.includes("yelp.com") || yelpPageTitle.includes(normalizeBizName(e.tags.name))) {
+				businessDesc = yelpDataHtml("meta[property='og:description']").attr("content")
+			}
+		} catch (e) {
+			console.error("Failed getting business description from yelp, ", e)
+		}
+
+		const dataObj = {
+			type: amenityType,
+			// type: "point of interest",
+			website: e.tags.website,
+			lattitude: e.lat,
+			longitude: e.lon,
+			name: e.tags.name,
+			address: `${e.tags["addr:housenumber"] | e.tags["addr:number"]} ${e.tags["addr:street"]}`,
+			hours: e.tags.opening_hours,
+			description: businessDesc,
+			image: ddgData?.image ?? ddgData?.embed?.image,
+			phoneNumber: ddgData.phoneNumber,
+			avatar: ddgData?.embed?.icon,
+			_attrTypes: {
+				type: "type",
+				website: "url",
+				lattitude: "float",
+				longitude: "float",
+				name: "string",
+				address: "address",
+				description: "string",
+				phoneNumber: "phoneNumber",
+				image: "image",
+				avatar: "image"
+			},
+			// stored just in case for reference later
+			_allOsmResults: JSON.parse(JSON.stringify(e))
+		}
+		// console.log(dataObj)
+		formattedResults.push(dataObj)
+	}
+
+	return formattedResults
+}
 
 async function getCafeAmenities() {
 	console.log("Starting getCafeAmenities...");
@@ -17,7 +135,6 @@ async function getCafeAmenities() {
 		console.log("~~~Top Level Crawl", data.website)
 		var menuUrl = undefined
 		var ddgData = {}
-		var yelpData = []
 
 		try {
 			data.website = toFetchUrl(data.website)
@@ -37,113 +154,30 @@ async function getCafeAmenities() {
 			});
 
 			ddgData = await ddgPoiFetch(data.name)
-
-			// TODO: Figure out what to do for Yelp rate limits (500 API calls per 24 hours) — more info at https://docs.developer.yelp.com/docs/fusion-rate-limiting
-			// ^ They mention caching as a potential method to minimize API calls, could also contact them to get more calls
-
-			// search for business on yelp
-			const yelpSearchFetch = await fetchWithTimeout(fetch(`
-				https://www.yelp.com/search?find_desc=${encodeURIComponent(data.name)}&find_loc=&l=g%3A-122.3473745587771%2C37.873881200886444%2C-122.54787504705835%2C37.65050533338459
-			`), 7500)
-
-			const yelpSearchText = await yelpSearchFetch.text()
-			var yelpHtml = cheerio.load(yelpSearchText)
-			const bizYelpLink = yelpHtml("h3 > a").attr("href")
-
-			// get business yelp page
-			const yelpDataFetch = await fetchWithTimeout(fetch(`https://www.yelp.com${bizYelpLink}`), 7500)
-			var yelpDataText = await yelpDataFetch.text()
-			yelpDataText = yelpDataText.replaceAll("&quot;", "\"")
-			yelpDataText = yelpDataText.substring(yelpDataText.indexOf("organizedProperties.0.properties"), yelpDataText.lastIndexOf("organizedProperties.0.properties"))
-			const attributesRegexp = new RegExp("\"displayText\":\".{0,50}?\"", "g")
-
-			// add all the amenities to the yelp data
-			yelpDataText.match(attributesRegexp).forEach(str => {
-				yelpData.push(
-					str.replace(`"displayText":"`, "").replace(`"`, "")
-				)
-			});
-			yelpData = yelpData.filter(x => x != "Women-owned" && !x.includes("noise"))
 		} catch (e) {
 			console.log("There was a error with POI", e)
 		} finally {
-			// console.log("ddgData?.hours: ", ddgData?.hours)
-			// TODO: Need to add another conditional statement for when hours is empty, currently we skip it entirely
-			// An idea would be to actually look at each element pulled from Overpass API and analyze the opening_hours method
-			// ^ (most places seem to work, with some caveats and formatting adjustments needed)
-
-			// Another observation, some sites (ex: https://noecafe.com/) seemingly have hours as an empty string because
-			// the website is a parent website of multiple locations. This poses an edge case and needs a workaround.
 			if (ddgData?.hours !== undefined /* && ddgData?.hours !== '' */ ) {
 				delete ddgData.hours.closes_soon
 				delete ddgData.hours.is_open
 				delete ddgData.hours.opens_soon
 				delete ddgData.hours.state_switch_time
-				// is name change neded?
-				// ddgData.hours.monday = ddgData.hours.Mon
-				// ddgData.hours.tuesday = ddgData.hours.Tue
-				// ddgData.hours.wednsday = ddgData.hours.Wed
-				// ddgData.hours.thursday = ddgData.hours.Thu
-				// ddgData.hours.friday = ddgData.hours.Fri
-				// ddgData.hours.saturday = ddgData.hours.Sat
-				// ddgData.hours.sunday = ddgData.hours.Sun
-
 				data.hours = JSON.stringify(ddgData.hours)
-			} else if (data?._allOsmResults?.tags?.opening_hours != undefined) {
-				data.hours = data._allOsmResults.tags.opening_hours
 			}
 
 			data.address =  ddgData?.address
 			data.price = priceToNumber(ddgData.price)
 			data.reviewsWebsite = ddgData.url
-			data.amenities = yelpData.length == 0 ? undefined : yelpData
-			data.phoneNumber = ddgData.phone
-			data._attrTypes.price = "int"
-			data._attrTypes.reviewsWebsite = "url"
-			data._attrTypes.amenities = "string"
-			data._attrTypes.phoneNumber = "phoneNumber"
+			data.menuWebsite = menuUrl
+			data._attrTypes = {
+				price: "int",
+				reviewsWebsite: "url",
+				amenities: "string",
+				menuWebsite: "website",
+			}
 		}
 	}
 	return cafeResults
-}
-// getCafeAmenities()
-
-async function getGenericAmenity(amenityType) {
-	const osmResults = await getPoisFromOverpass(amenityType)
-	if (osmResults === undefined) {
-		console.error("Error!!")
-		return
-	}
-	const formattedResults = []
-
-	for (var _i = 0; _i < osmResults.length; _i++) {
-		const e = osmResults[_i]
-
-		const ddgData = await ddgPoiFetch(e.tags.name)
-
-		const dataObj = {
-			// type: amenityType,
-			type: "point of interest",
-			website: e.tags.website,
-			lattitude: e.lat,
-			longitude: e.lon,
-			name: e.tags.name,
-			address: `${e.tags["addr:housenumber"] | e.tags["addr:number"]} ${e.tags["addr:street"]}`,
-			_attrTypes: {
-				type: "type",
-				website: "url",
-				lattitude: "float",
-				longitude: "float",
-				name: "string",
-				address: "address",
-			},
-			// stored just in case for reference later
-			_allOsmResults: JSON.parse(JSON.stringify(e))
-		}
-		formattedResults.push(dataObj)
-	}
-
-	return formattedResults
 }
 
 // Function which gets events in San Francisco
@@ -153,32 +187,32 @@ async function getEvents(city = "san-francisco") {
 	const browser = await puppeteer.launch();
 
 	// Meetup.com
-	const meetupPage = await browser.newPage();
-	await meetupPage.goto(`https://www.meetup.com/find/?eventType=inPerson&source=EVENTS&location=us--ca--${city}&distance=tenMiles`, {
-		waitUntil: 'networkidle2'
-	});
-
-	// Eventbrite
-	const eventbritePage = await browser.newPage();
-	await eventbritePage.goto(`https://www.eventbrite.com/d/ca--${city}/events--this-week/`,
-		{ waitUntil: 'networkidle2' }
-	)
-
-	const eventBriteLinks = await eventbritePage.evaluate(
-		() => Array.from(
-			document.querySelectorAll('a[class="event-card-link "]'),
-			a => a.getAttribute('href')
-		)
+	const meetupPageFetch = await fetchWithTimeout(
+		fetch(`https://www.meetup.com/find/?eventType=inPerson&source=EVENTS&location=us--ca--${city}&distance=tenMiles`),
+		7500
 	);
+	const meetupPageText = await meetupPageFetch.text()
+	const meetupPage = cheerio.load(meetupPageText)
 
-	const meetupLinks = await meetupPage.evaluate(
-		() => Array.from(
-			document.querySelectorAll('a[id="event-card-in-search-results"]'),
-			a => a.getAttribute('href')
-		)
+	// eventbrite
+	const eventbritePageFetch = await fetchWithTimeout(
+		fetch(`https://www.eventbrite.com/d/ca--${city}/events--this-week/`),
+		7500
 	);
+	const eventbritePageText = await eventbritePageFetch.text()
+	const eventbritePage = cheerio.load(eventbritePageText)
 
-	let compiledEventLinks = [...eventBriteLinks, ...meetupLinks]
+	const meetupLinks = []
+	meetupPage(`a[id="event-card-in-search-results"]`).each(function() {
+		meetupLinks.push(meetupPage(this).attr("href"))
+	})
+
+	const eventbriteLinks = []
+	eventbritePage(`a[class="event-card-link "]`).each(function() {
+		eventbriteLinks.push(eventbritePage(this).attr("href"))
+	})
+
+	let compiledEventLinks = [...eventbriteLinks, ...meetupLinks]
 
 	let filteredEventLinks = [];
 	compiledEventLinks.forEach((eventLink) => {
@@ -197,15 +231,14 @@ async function getEvents(city = "san-francisco") {
 		try {
 			console.log("Navigating to:", link);
 
-			await eventsPages.goto(link, {
-				waitUntil: "networkidle0",
-				timeout: 30000
-			});
+			const thisEventPageFetch = await fetchWithTimeout(fetch(link), 7500);
+			const thisEventPageText = await thisEventPageFetch.text()
+			const thisEventPage = cheerio.load(thisEventPageText)
 
-			const extractedEventPageData = await eventsPages.evaluate(() => {
-				const jsonScripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
-				return jsonScripts.map(script => JSON.parse(script.textContent));
-			});
+			const extractedEventPageData = []
+			thisEventPage('script[type="application/ld+json"]').each(function() {
+				extractedEventPageData.push(JSON.parse(thisEventPage(this).prop("textContent")))
+			})
 
 			let relevantEventData;
 			const index = link.includes("https://www.eventbrite.com") ? 0 : 1
@@ -230,7 +263,7 @@ async function getEvents(city = "san-francisco") {
 					description: "string",
 					locationName: "place",
 					locationAddress: "address",
-					organizerName: "project",
+					organizerName: "organizer",
 				}
 			}
 			// concatenate some relevant paramaters to uniquely distinguish event
@@ -455,7 +488,7 @@ async function getLocalEvents(neighborhood) {
 // getLocalEvents("inner-sunset")
 
 async function main() {
-	// targeted amenities for generic scraping
+	// targeted amenities for scraping
 	// this is just a start, more can be added
 	const targetAmenities = [
 		"car_rental",
@@ -464,7 +497,9 @@ async function main() {
 		"library",
 		"fuel",
 		"bank",
+		"cinema"
 	]
+
 	const finalResults = []
 
 	// const neighborhoods = ["marina", "ingleside", "mission", "richmond", "sunset"]
@@ -475,28 +510,38 @@ async function main() {
 	// 	finalResults.push(...neighborhoodNews)
 	// }
 
-	console.log("finalResults: ", finalResults)
-
 	const cafeResults = await getCafeAmenities()
-	// const eventResults = await getEvents()
+	const eventResults = await getEvents()
 
-	finalResults.push(...cafeResults)
+	finalResults.push(...cafeResults, ...eventResults)
 
-	// get generic amenities (it takes a bit)
-	// for (var i = 0; i < targetAmenities.length; i++) {
-	// 	const genResults = await getGenericAmenity(targetAmenities[i])
-	// 	finalResults.push(...genResults)
-	// }
+	// get other amenities (it takes a bit)
+	for (var i = 0; i < targetAmenities.length; i++) {
+		const genResults = await getGenericAmenity(targetAmenities[i])
+		finalResults.push(...genResults)
+	}
 
 	console.log(finalResults)
 
+	finalResults.forEach(elm => {
+		for (const key in elm) {
+			const tmp = JSON.stringify(elm[key])
+			delete elm[key]
+			try {
+				elm[getGeoAttrId(key)] = JSON.parse(tmp)
+			} catch (e) {
+				elm[getGeoAttrId(key)] = tmp
+			}
+		}
+	})
+
 	// data can be just pushed to remote, or synced with it
 	withDbClient(async (dbConfig) => {
-		await syncWithRemote(finalResults, dbConfig)
+		// await syncWithRemote(finalResults, dbConfig, true)
 
-		// for (let i = 0; i < finalResults.length; i++) {
-		// 	await saveToPostgres(finalResults[i], dbConfig);
-		// }
+		for (let i = 0; i < finalResults.length; i++) {
+			await saveToPostgres(finalResults[i], dbConfig);
+		}
 	});
 }
 
@@ -551,36 +596,11 @@ function priceToNumber(priceVal) {
 	}
 }
 
-async function getPoisFromOverpass(poiType) {
-	const initialQuery = await fetch(OPA_API_URL, {
-		method: "POST",
-		body: "data=" + encodeURIComponent(`
-		[out:json]
-		[timeout:90]
-		[maxsize:1000000]
-		;
-		node(37.71044257039148,-122.52330780029298,37.80647004655113,-122.34684155555281)
-		[amenity=${poiType}];
-		out;`)
-	})
-	if (!initialQuery.ok) {
-		const result = await initialQuery.text()
-		return;
-	}
-	const result = await initialQuery.json()
-	return result.elements.filter(x => x?.tags?.website !== undefined).slice(0, 10)
-}
-
-async function ddgPoiFetch(poiName) {
-	const ddgDataFetch = await fetchWithTimeout(
-		fetch("https://duckduckgo.com/local.js?l=us-en&q=" + encodeURIComponent(poiName + " san francisco")), 5000)
-	const ddgData = await ddgDataFetch.json()
-	if (ddgDataFetch.ok == false) {
-		throw Error("Invalid status code")
-	} else if (ddgData.signal !== "high") {
-		throw Error("Signal was not high")
-	}
-	return ddgData.results[0]
+// try to eliminate some common variations in business naming
+function normalizeBizName(str) {
+	return str.toLowerCase()
+		.replaceAll("&", "and")
+		.replaceAll("-", " ")
 }
 
 // save object as OAV triplets to postgres
@@ -597,13 +617,14 @@ async function saveToPostgres(dataObj, client) {
 
 	for (const [key, value] of Object.entries(dataObj)) {
 	  if (!key.startsWith("_") && String(value) !== "undefined" && String(value) !== "null") {
+	  if (key == getGeoAttrId("website")) continue
 		const queryStr = "INSERT INTO poiData(object, attribute, value, attributeType) VALUES($1, $2, $3, $4)";
 		await client.query(queryStr, [randomId, key, value, attrTypes[key]]);
 	  }
 	}
   }
 
-async function syncWithRemote(dataObj, client) {
+async function syncWithRemote(dataObj, client, saveToCsv = false) {
 	dataObj = JSON.parse(JSON.stringify(dataObj))
 	const remoteClientCall = await client.query("SELECT * FROM poiData")
 	const remoteData = {}
@@ -649,7 +670,20 @@ async function syncWithRemote(dataObj, client) {
 		}
 	}
 
-	// todo: add the case where there is a new attribute to be added rather than just updating
+	console.log("data obj is",dataObj)
+	if (saveToCsv) {
+		fs.writeFileSync("./changes-export.csv", "object,attribute,value\n")
+		for (var i = 0; i < dataObj.length; i++) {
+			for (const key in dataObj[i]) {
+				// don't update underscore'd keys
+				if (key.startsWith("_")) continue
+				fs.appendFileSync("./changes-export.csv", `"${thisToRemoteKey[i]}","${key}","${dataObj[i][key]}"\n`)
+			}
+		}
+		return
+	}
+
+
 	for (var i = 0; i < dataObj.length; i++) {
 		if (JSON.stringify(dataObj[i]) == "{}") continue
 		for (const key in dataObj[i]) {
