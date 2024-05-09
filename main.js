@@ -1,43 +1,43 @@
-const cheerio = require('cheerio');
-require('dotenv').config()
+const cheerio = require("cheerio");
+require("dotenv").config();
 const withDbClient = require("./dbClient");
-const getGeoAttrId = require("./geo-attrs-map.js")
-const puppeteer = require('puppeteer');
-const uuid = require("uuid")
-const fs = require("fs")
+const getGeoAttrId = require("./geo-attrs-map.js");
+const puppeteer = require("puppeteer");
+const uuid = require("uuid");
+const fs = require("fs");
 
-const OPA_API_URL = process.env.OPA_API_URL
+const OPA_API_URL = process.env.OPA_API_URL;
 
 async function getPoisFromOverpass(poiType) {
 	const initialQuery = await fetch(OPA_API_URL, {
 		method: "POST",
-		body: "data=" + encodeURIComponent(`
+		body: "data=" +
+			encodeURIComponent(`
 		[out:json]
 		[timeout:90]
 		[maxsize:1000000]
 		;
 		node(37.71044257039148,-122.52330780029298,37.80647004655113,-122.34684155555281)
 		[amenity=${poiType}];
-		out;`)
-	})
+		out;`),
+	});
 	if (!initialQuery.ok) {
-		const result = await initialQuery.text()
-		return;
+		const result = await initialQuery.text();
+		return
 	}
-	const result = await initialQuery.json()
-	return result.elements.filter(x => x?.tags?.website !== undefined).slice(0, 10)
+	const result = await initialQuery.json();
+	return result.elements.filter((x) => x?.tags?.website !== undefined).slice(0, 10);
 }
 
 async function ddgPoiFetch(poiName) {
-	const ddgDataFetch = await fetchWithTimeout(
-		fetch("https://duckduckgo.com/local.js?l=us-en&q=" + encodeURIComponent(poiName + " san francisco")), 5000)
-	const ddgData = await ddgDataFetch.json()
+	const ddgDataFetch = await fetchWithTimeout(fetch("https://duckduckgo.com/local.js?l=us-en&q=" + encodeURIComponent(poiName + " san francisco")), 5000);
+	const ddgData = await ddgDataFetch.json();
 	if (ddgDataFetch.ok == false) {
-		throw Error("Invalid status code")
+		throw Error("Invalid status code");
 	} else if (ddgData.signal !== "high") {
-		throw Error("Signal was not high")
+		throw Error("Signal was not high");
 	}
-	return ddgData.results[0]
+	return ddgData.results[0];
 }
 
 async function getGenericAmenity(amenityType, tryYelpSearch = true) {
@@ -48,10 +48,11 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 	}
 	const formattedResults = []
 
-	for (var _i = 0; _i < osmResults.length; _i++) {
-		const e = osmResults[_i]
+	for (var i = 0; i < osmResults.length; i++) {
+		const e = osmResults[i]
 
 		var businessDesc = undefined
+		var businessImg = undefined
 		var ddgData = {}
 		try {
 			console.log("Getting information for business (", i, ")", e.tags.name)
@@ -61,12 +62,13 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 
 			businessDesc = ddgData.embed?.description
 
-			var bizYelpLink = ddgData.url
+			var bizYelpLink = ddgData.url;
 			// search for business on yelp if needed (tripadvisor doesnt have business description)
 			if (!bizYelpLink?.includes("yelp.com")) {
-				const yelpSearchFetch = await fetchWithTimeout(fetch(`
-					https://www.yelp.com/search?find_desc=${encodeURIComponent(e.tags.name)}&find_loc=&l=g%3A-122.3473745587771%2C37.873881200886444%2C-122.54787504705835%2C37.65050533338459
-				`), 7500)
+				const yelpSearchFetch = await fetchWithTimeout(
+					fetch(`https://www.yelp.com/search?find_desc=${encodeURIComponent(e.tags.name)}&find_loc=&l=g%3A-122.3473745587771%2C37.873881200886444%2C-122.54787504705835%2C37.65050533338459`),
+					7500
+				)
 
 				const yelpSearchText = await yelpSearchFetch.text()
 				var yelpHtml = cheerio.load(yelpSearchText)
@@ -76,17 +78,20 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 			}
 
 			// get business yelp page
-			const yelpDataFetch = await fetchWithTimeout(fetch(bizYelpLink), 7500)
-			const yelpDataText = await yelpDataFetch.text()
-			const yelpDataHtml = cheerio.load(yelpDataText)
+			const yelpDataFetch = await fetchWithTimeout(fetch(bizYelpLink), 7500);
+			const yelpDataText = await yelpDataFetch.text();
+			const yelpDataHtml = cheerio.load(yelpDataText);
 
 			// SEO meta tags are useful to get information
-			const yelpPageTitle = normalizeBizName(yelpDataHtml("meta[property='og:title']").attr("content"))
+			const yelpPageTitle = normalizeBizName(yelpDataHtml("meta[property='og:title']").attr("content"));
 			if (ddgData.url?.includes("yelp.com") || yelpPageTitle.includes(normalizeBizName(e.tags.name))) {
-				businessDesc = yelpDataHtml("meta[property='og:description']").attr("content")
+				businessDesc = yelpDataHtml("meta[property='og:description']").attr("content");
+				businessImg = yelpDataHtml("meta[property='og:image']").attr("content");
 			}
-		} catch (e) {
-			console.error("Failed getting business description from yelp, ", e)
+			saveLog("success", `Generic amenity scrape for ${e.tags.name}`, yelpDataText)
+		} catch (err) {
+			saveLog("error", `Generic amenity scrape for ${e.tags.name}`, err)
+			console.error("Failed getting business description from yelp, ", err);
 		}
 
 		const dataObj = {
@@ -99,7 +104,7 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 			address: `${e.tags["addr:housenumber"] | e.tags["addr:number"]} ${e.tags["addr:street"]}`,
 			hours: e.tags.opening_hours,
 			description: businessDesc,
-			image: ddgData?.image ?? ddgData?.embed?.image,
+			image: businessImg ?? ddgData?.image ?? ddgData?.embed?.image,
 			phoneNumber: ddgData.phoneNumber,
 			avatar: ddgData?.embed?.icon,
 			_attrTypes: {
@@ -112,114 +117,106 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 				description: "string",
 				phoneNumber: "phoneNumber",
 				image: "image",
-				avatar: "image"
+				avatar: "image",
 			},
 			// stored just in case for reference later
-			_allOsmResults: JSON.parse(JSON.stringify(e))
-		}
-		// console.log(dataObj)
-		formattedResults.push(dataObj)
+			_allOsmResults: JSON.parse(JSON.stringify(e)),
+		};
+		formattedResults.push(dataObj);
 	}
 
-	return formattedResults
+	return formattedResults;
 }
 
 async function getCafeAmenities() {
 	console.log("Starting getCafeAmenities...");
-	const cafeResults = await getGenericAmenity("cafe")
+	const cafeResults = await getGenericAmenity("cafe");
 	// console.log("Initial results:", cafeResults);
 	for (var _i = 0; _i < cafeResults.length; _i++) {
-		const data = cafeResults[_i]
-		data.type = "cafe"
+		const data = cafeResults[_i];
+		data.type = "cafe";
 
-		console.log("~~~Top Level Crawl", data.website)
-		var menuUrl = undefined
-		var ddgData = {}
+		console.log("~~~Top Level Crawl", data.website);
+		var menuUrl = undefined;
+		var ddgData = {};
 
 		try {
-			data.website = toFetchUrl(data.website)
+			data.website = toFetchUrl(data.website);
 			let websiteContent = await fetchWithTimeout(fetch(data.website), 5000);
 			let text = await websiteContent.text();
 			const $ = cheerio.load(text);
-			$('a').each((i, link) => {
-				let href = $(link).attr('href');
+			$("a").each((i, link) => {
+				let href = $(link).attr("href");
 				if (menuUrl === undefined && href?.includes("menu")) {
-					console.log("found menu", href)
+					console.log("found menu", href);
 					if (href.startsWith("https://") || href.startsWith("http://") || href.startsWith("//")) {
-						menuUrl = toFetchUrl(href)
+						menuUrl = toFetchUrl(href);
 					} else {
-						menuUrl = toAbsoluteUrl(data.website, href)
+						menuUrl = toAbsoluteUrl(data.website, href);
 					}
 				}
 			});
 
-			ddgData = await ddgPoiFetch(data.name)
+			ddgData = await ddgPoiFetch(data.name);
 		} catch (e) {
-			console.log("There was a error with POI", e)
+			console.log("There was a error with POI", e);
 		} finally {
 			if (ddgData?.hours !== undefined /* && ddgData?.hours !== '' */ ) {
-				delete ddgData.hours.closes_soon
-				delete ddgData.hours.is_open
-				delete ddgData.hours.opens_soon
-				delete ddgData.hours.state_switch_time
-				data.hours = JSON.stringify(ddgData.hours)
+				delete ddgData.hours.closes_soon;
+				delete ddgData.hours.is_open;
+				delete ddgData.hours.opens_soon;
+				delete ddgData.hours.state_switch_time;
+				data.hours = JSON.stringify(ddgData.hours);
 			}
 
-			data.address =  ddgData?.address
-			data.price = priceToNumber(ddgData.price)
-			data.reviewsWebsite = ddgData.url
-			data.menuWebsite = menuUrl
+			data.price = priceToNumber(ddgData.price);
+			data.reviewsWebsite = ddgData.url;
+			data.menuWebsite = menuUrl;
 			data._attrTypes = {
 				price: "int",
 				reviewsWebsite: "url",
 				amenities: "string",
 				menuWebsite: "website",
-			}
+			};
 		}
 	}
-	return cafeResults
+	return cafeResults;
 }
 
 // Function which gets events in San Francisco
 async function getEvents(city = "san-francisco") {
 	console.log("starting getEvents...");
-	const encounteredEvents = []
+	const encounteredEvents = [];
 	const browser = await puppeteer.launch();
 
 	// Meetup.com
-	const meetupPageFetch = await fetchWithTimeout(
-		fetch(`https://www.meetup.com/find/?eventType=inPerson&source=EVENTS&location=us--ca--${city}&distance=tenMiles`),
-		7500
-	);
-	const meetupPageText = await meetupPageFetch.text()
-	const meetupPage = cheerio.load(meetupPageText)
+	const meetupPageFetch = await fetchWithTimeout(fetch(`https://www.meetup.com/find/?eventType=inPerson&source=EVENTS&location=us--ca--${city}&distance=tenMiles`), 7500);
+	const meetupPageText = await meetupPageFetch.text();
+	const meetupPage = cheerio.load(meetupPageText);
 
 	// eventbrite
-	const eventbritePageFetch = await fetchWithTimeout(
-		fetch(`https://www.eventbrite.com/d/ca--${city}/events--this-week/`),
-		7500
-	);
-	const eventbritePageText = await eventbritePageFetch.text()
-	const eventbritePage = cheerio.load(eventbritePageText)
+	const eventbritePageFetch = await fetchWithTimeout(fetch(`https://www.eventbrite.com/d/ca--${city}/events--this-week/`), 7500);
+	const eventbritePageText = await eventbritePageFetch.text();
+	const eventbritePage = cheerio.load(eventbritePageText);
 
-	const meetupLinks = []
+	const meetupLinks = [];
 	meetupPage(`a[id="event-card-in-search-results"]`).each(function() {
-		meetupLinks.push(meetupPage(this).attr("href"))
-	})
+		meetupLinks.push(meetupPage(this).attr("href"));
+	});
 
-	const eventbriteLinks = []
+	const eventbriteLinks = [];
 	eventbritePage(`a[class="event-card-link "]`).each(function() {
-		eventbriteLinks.push(eventbritePage(this).attr("href"))
-	})
+		eventbriteLinks.push(eventbritePage(this).attr("href"));
+	});
 
-	let compiledEventLinks = [...eventbriteLinks, ...meetupLinks]
+	let compiledEventLinks = [...eventbriteLinks, ...meetupLinks];
 
 	let filteredEventLinks = [];
 	compiledEventLinks.forEach((eventLink) => {
-		if (!(filteredEventLinks.includes(eventLink))) {
-			filteredEventLinks.push(eventLink)
+		if (!filteredEventLinks.includes(eventLink)) {
+			filteredEventLinks.push(eventLink);
 		}
-	})
+	});
 
 	console.log("filteredEventLinks: ", filteredEventLinks);
 
@@ -229,9 +226,9 @@ async function getEvents(city = "san-francisco") {
 	// For each link, navigate and extract relevant information
 	for (const link of filteredEventLinks) {
 		try {
-			console.log("Navigating to:", link);
+			console.log("Navigating to:", link)
 
-			const thisEventPageFetch = await fetchWithTimeout(fetch(link), 7500);
+			const thisEventPageFetch = await fetchWithTimeout(fetch(link), 7500)
 			const thisEventPageText = await thisEventPageFetch.text()
 			const thisEventPage = cheerio.load(thisEventPageText)
 
@@ -240,7 +237,9 @@ async function getEvents(city = "san-francisco") {
 				extractedEventPageData.push(JSON.parse(thisEventPage(this).prop("textContent")))
 			})
 
-			let relevantEventData;
+			const price = thisEventPage(".conversion-bar__panel-info").prop("textContent")
+
+			let relevantEventData
 			const index = link.includes("https://www.eventbrite.com") ? 0 : 1
 			relevantEventData = {
 				type: "event",
@@ -253,6 +252,7 @@ async function getEvents(city = "san-francisco") {
 				locationName: extractedEventPageData[index]?.location?.name,
 				locationAddress: extractedEventPageData[index]?.location?.address?.streetAddress,
 				organizerName: extractedEventPageData[index]?.organizer?.name,
+				price: price,
 				_attrTypes: {
 					type: "type",
 					startDate: "date",
@@ -264,32 +264,31 @@ async function getEvents(city = "san-francisco") {
 					locationName: "place",
 					locationAddress: "address",
 					organizerName: "organizer",
-				}
-			}
+					price: "price"
+				},
+			};
 			// concatenate some relevant paramaters to uniquely distinguish event
-			const eventFingerprint = (relevantEventData.name +
-				relevantEventData.organizerName +
-				relevantEventData.startDate).toLowerCase()
+			const eventFingerprint = (relevantEventData.name + relevantEventData.organizerName + relevantEventData.startDate).toLowerCase();
 
 			if (encounteredEvents.includes(eventFingerprint)) {
 				continue;
 			}
 
-			encounteredEvents.push(eventFingerprint)
+			encounteredEvents.push(eventFingerprint);
 			// Revisit these console logs if I want to get more information
 			// console.log("extractedEventPageData0: ", extractedEventPageData[0])
 			// console.log("extractedEventPageData1: ", extractedEventPageData[1])
 			// console.log("extractedEventPageData2: ", extractedEventPageData[2])
-			meetupEventData.push(relevantEventData)
+			meetupEventData.push(relevantEventData);
+			saveLog("success", `Event scrape for ${link}`, thisEventPageText)
 		} catch (error) {
+			saveLog("error", `Event scrape for ${link}`, error)
 			console.error(`Error navigating to ${link}:`, error);
 		}
 	}
 
-	console.log("meetupEventData: ", meetupEventData)
-
 	await browser.close();
-	return meetupEventData
+	return meetupEventData;
 }
 
 // getEvents()
@@ -306,50 +305,44 @@ async function getLocalNews(neighborhood) {
 	// Hoodline
 
 	const neighborhoodNews = {
-		"marina": {
-			rootUrl: "https://www.marinatimes.com/category/news",
+		marina: {
+			rootUrl: "https://www.marinatimes.com/category/news"
 		},
-		"richmond": {
+		richmond: {
 			rootUrl: "https://richmondsunsetnews.com/"
 		},
-		"sunset": {
+		sunset: {
 			rootUrl: "https://richmondsunsetnews.com/"
 		},
-		"ingleside": {
+		ingleside: {
 			rootUrl: "https://www.inglesidelight.com/latest/"
 		},
-		"mission": {
+		mission: {
 			rootUrl: "https://missionlocal.org/category/featured/"
 		},
-		"chinatown": {
+		chinatown: {
 			rootUrl: "https://www.windnewspaper.com/category/chinatown"
-		}
-	}
+		},
+	};
 
 	const newsPage = await browser.newPage();
 	await newsPage.goto(neighborhoodNews[neighborhood.toLowerCase()].rootUrl, {
-		waitUntil: 'networkidle2'
-	})
+		waitUntil: "networkidle2",
+	});
 
-	const newsLinks = await newsPage.evaluate(
-		(neighborhood) => {
-			const linkSelectors = {
-				"marina": 'a[class="item container"]',
-				"ingleside": 'a[class="post-card__media"]',
-				"richmond": 'h2[class="posttitle"] > a',
-				"sunset": 'h2[class="posttitle"] > a',
-				"mission": 'a[class="post-thumbnail-inner"]'
-			};
-			const selector = linkSelectors[neighborhood.toLowerCase()]
-			return Array.from(
-				document.querySelectorAll(selector),
-				a => a.getAttribute('href')
-			);
-		},
-		neighborhood
-	);
+	const newsLinks = await newsPage.evaluate((neighborhood) => {
+		const linkSelectors = {
+			marina: 'a[class="item container"]',
+			ingleside: 'a[class="post-card__media"]',
+			richmond: 'h2[class="posttitle"] > a',
+			sunset: 'h2[class="posttitle"] > a',
+			mission: 'a[class="post-thumbnail-inner"]',
+		};
+		const selector = linkSelectors[neighborhood.toLowerCase()];
+		return Array.from(document.querySelectorAll(selector), (a) => a.getAttribute("href"));
+	}, neighborhood);
 
-	console.log("newsLinks: ", newsLinks)
+	console.log("newsLinks: ", newsLinks);
 
 	const newsPages = await browser.newPage();
 	let newsData = [];
@@ -360,7 +353,7 @@ async function getLocalNews(neighborhood) {
 
 			await newsPages.goto(link, {
 				waitUntil: "networkidle0",
-				timeout: 60000
+				timeout: 60000,
 			});
 
 			// Leave this here for testing
@@ -378,86 +371,91 @@ async function getLocalNews(neighborhood) {
 
 			console.log("extractedEventPageData: ", extractedEventPageData) */
 
-			const extractedEventPageData = await newsPages.evaluate((neighborhood, link) => {
-				console.log(" in extractedEventPageData")
-				const configs = {
-					"marina": {
-						categorySelector: 'div.category',
-						authorSelector: 'div.author',
-						dateSelector: 'div.date',
-						titleSelector: 'div.left > h1',
-						subtitleSelector: 'div.subtitle',
-						contentSelector: '.content > p'
-					},
-					"ingleside": {
-						categorySelector: 'a[class*="post-tag mr-sm"]',
-						authorSelector: 'span.post-info__authors > a',
-						dateSelector: 'div.post-info > time',
-						titleSelector: 'h1.post-hero__title',
-						subtitleSelector: 'p.post-hero__excerpt.text-acc',
-						contentSelector: 'article[class*="post-access-public"] > p'
-					},
-					"richmond": {
-						categorySelector: 'a[class="post-lead-category"]',
-						// authorSelector: '',
-						dateSelector: 'time.entry-date',
-						titleSelector: 'h1.title',
-						// subtitleSelector: '',
-						contentSelector: 'section[class="entry"] > p'
-					},
-					"sunset": {
-						categorySelector: 'a[class="post-lead-category"]',
-						// authorSelector: '',
-						dateSelector: 'time.entry-date',
-						titleSelector: 'h1.title',
-						// subtitleSelector: '',
-						contentSelector: 'section[class="entry"] > p'
-					},
-					"mission": {
-						categorySelector: 'span[class="cat-links"] > a',
-						authorSelector: 'span[class="author vcard"] > a',
-						dateSelector: 'time[class="entry-date published"]',
-						titleSelector: 'h1.entry-title ',
-						// subtitleSelector: '',
-						contentSelector: 'div[class="entry-content"] > p'
-					}
-				};
+			const extractedEventPageData = await newsPages.evaluate(
+				(neighborhood, link) => {
+					console.log(" in extractedEventPageData");
+					const configs = {
+						marina: {
+							categorySelector: "div.category",
+							authorSelector: "div.author",
+							dateSelector: "div.date",
+							titleSelector: "div.left > h1",
+							subtitleSelector: "div.subtitle",
+							contentSelector: ".content > p",
+						},
+						ingleside: {
+							categorySelector: 'a[class*="post-tag mr-sm"]',
+							authorSelector: "span.post-info__authors > a",
+							dateSelector: "div.post-info > time",
+							titleSelector: "h1.post-hero__title",
+							subtitleSelector: "p.post-hero__excerpt.text-acc",
+							contentSelector: 'article[class*="post-access-public"] > p',
+						},
+						richmond: {
+							categorySelector: 'a[class="post-lead-category"]',
+							// authorSelector: '',
+							dateSelector: "time.entry-date",
+							titleSelector: "h1.title",
+							// subtitleSelector: '',
+							contentSelector: 'section[class="entry"] > p',
+						},
+						sunset: {
+							categorySelector: 'a[class="post-lead-category"]',
+							// authorSelector: '',
+							dateSelector: "time.entry-date",
+							titleSelector: "h1.title",
+							// subtitleSelector: '',
+							contentSelector: 'section[class="entry"] > p',
+						},
+						mission: {
+							categorySelector: 'span[class="cat-links"] > a',
+							authorSelector: 'span[class="author vcard"] > a',
+							dateSelector: 'time[class="entry-date published"]',
+							titleSelector: "h1.entry-title ",
+							// subtitleSelector: '',
+							contentSelector: 'div[class="entry-content"] > p',
+						},
+					};
 
-				const config = configs[neighborhood.toLowerCase()];
+					const config = configs[neighborhood.toLowerCase()];
 
-				let newsArticleObj = {
-					type: 'news',
-					neighborhood: neighborhood,
-					category: '' || document.querySelector(config.categorySelector)?.innerText,
-					author: '' || document.querySelector(config.authorSelector)?.innerText,
-					date: '' || document.querySelector(config.dateSelector)?.innerText,
-					title: '' || document.querySelector(config.titleSelector)?.innerText,
-					subtitle: '' || document.querySelector(config.subtitleSelector)?.innerText,
-					content: '' || Array.from(document.querySelectorAll(config.contentSelector))
-						.map(p => p.innerText)
-  						.join('<br><br>'),
-					url: link,
-					_attrTypes: {
-						type: "type",
-						neighborhood: "string",
-						category: "string",
-						author: "string",
-						date: "date",
-						title: "string",
-						subtitle: "string",
-						content: "string",
-						url: "string",
-					}
-				}
-				return newsArticleObj;
-			}, neighborhood, link);
-			newsData.push(extractedEventPageData)
+					let newsArticleObj = {
+						type: "news",
+						neighborhood: neighborhood,
+						category: "" || document.querySelector(config.categorySelector)?.innerText,
+						author: "" || document.querySelector(config.authorSelector)?.innerText,
+						date: "" || document.querySelector(config.dateSelector)?.innerText,
+						title: "" || document.querySelector(config.titleSelector)?.innerText,
+						subtitle: "" || document.querySelector(config.subtitleSelector)?.innerText,
+						content: "" ||
+							Array.from(document.querySelectorAll(config.contentSelector))
+							.map((p) => p.innerText)
+							.join("<br><br>"),
+						url: link,
+						_attrTypes: {
+							type: "type",
+							neighborhood: "string",
+							category: "string",
+							author: "string",
+							date: "date",
+							title: "string",
+							subtitle: "string",
+							content: "string",
+							url: "string",
+						},
+					};
+					return newsArticleObj;
+				},
+				neighborhood,
+				link
+			);
+			newsData.push(extractedEventPageData);
 		} catch (error) {
 			console.error(`Error navigating to ${link}:`, error);
 		}
 	}
 	await browser.close();
-	return newsData
+	return newsData;
 }
 
 // getLocalNews("mission")
@@ -470,17 +468,17 @@ async function getLocalEvents(neighborhood) {
 	if (neighborhood.toLowerCase() === "inner sunset") {
 		const sunsetNewsPage = await browser.newPage();
 		await sunsetNewsPage.goto(`https://www.inner-sunset.org/events-2/`, {
-			waitUntil: 'networkidle2'
+			waitUntil: "networkidle2",
 		});
 	} else if (neighborhood.toLowerCase() === "cole valley") {
 		const coleValleyNewsPage = await browser.newPage();
 		await coleValleyNewsPage.goto(`http://www.colevalleysf.com/local-happenings.html`, {
-			waitUntil: 'networkidle2'
+			waitUntil: "networkidle2",
 		});
 	} else if (neighborhood.toLowerCase() === "nopa") {
 		const nopaNewsPage = await browser.newPage();
 		await nopaNewsPage.goto(`https://www.nopna.org/events`, {
-			waitUntil: 'networkidle2'
+			waitUntil: "networkidle2",
 		});
 	}
 }
@@ -490,15 +488,7 @@ async function getLocalEvents(neighborhood) {
 async function main() {
 	// targeted amenities for scraping
 	// this is just a start, more can be added
-	const targetAmenities = [
-		"car_rental",
-		"fast_food",
-		"restaurant",
-		"library",
-		"fuel",
-		"bank",
-		"cinema"
-	]
+	const targetAmenities = ["car_rental", "fast_food", "restaurant", "library", "fuel", "bank", "cinema"]
 
 	const finalResults = []
 
@@ -511,61 +501,57 @@ async function main() {
 	// }
 
 	const cafeResults = await getCafeAmenities()
-	const eventResults = await getEvents()
+	finalResults.push(...cafeResults)
 
-	finalResults.push(...cafeResults, ...eventResults)
+	const eventResults = await getEvents();
+	finalResults.push(...eventResults)
 
 	// get other amenities (it takes a bit)
 	for (var i = 0; i < targetAmenities.length; i++) {
-		const genResults = await getGenericAmenity(targetAmenities[i])
-		finalResults.push(...genResults)
+		const genResults = await getGenericAmenity(targetAmenities[i]);
+		finalResults.push(...genResults);
 	}
 
-	console.log(finalResults)
+	// console.log(finalResults);
 
-	finalResults.forEach(elm => {
+	finalResults.forEach((elm) => {
 		for (const key in elm) {
-			const tmp = JSON.stringify(elm[key])
-			delete elm[key]
-			try {
-				elm[getGeoAttrId(key)] = JSON.parse(tmp)
-			} catch (e) {
-				elm[getGeoAttrId(key)] = tmp
-			}
+			const tmp = elm[key];
+			delete elm[key];
+			elm[getGeoAttrId(key)] = tmp;
 		}
-	})
+	});
 
 	// data can be just pushed to remote, or synced with it
 	withDbClient(async (dbConfig) => {
 		// await syncWithRemote(finalResults, dbConfig, true)
 
 		for (let i = 0; i < finalResults.length; i++) {
-			await saveToPostgres(finalResults[i], dbConfig);
+			const cleaned = cleanObjectForDb(finalResults[i])
+			console.log(cleaned)
+			await saveToPostgres(cleaned, dbConfig);
 		}
 	});
 }
 
-main()
+main();
 
 function toFetchUrl(url) {
-	if (url.startsWith("//") ||
-	(url.startsWith("http://") == false &&
-	url.startsWith("https://") == false) ) {
-
-		url = "http:" + url
+	if (url.startsWith("//") || (url.startsWith("http://") == false && url.startsWith("https://") == false)) {
+		url = "http:" + url;
 	}
 
 	if (url.endsWith("/")) {
-		url = url.slice(0, -1)
+		url = url.slice(0, -1);
 	}
 
-	return url
+	return url;
 }
 
 function toAbsoluteUrl(base, relative) {
-	base = toFetchUrl(base)
+	base = toFetchUrl(base);
 	if (!base.endsWith("/") && !relative.startsWith("/")) {
-		base += "/"
+		base += "/";
 	}
 	return base + relative;
 }
@@ -574,39 +560,53 @@ function fetchWithTimeout(fetchReq, timeout) {
 	return Promise.race([
 		fetchReq,
 		new Promise((resolve, reject) => {
-			setTimeout(() => reject(`Fetch timeout reached: ${timeout}ms`), timeout)
-		})
-	])
+			setTimeout(() => reject(`Fetch timeout reached: ${timeout}ms`), timeout);
+		}),
+	]);
 }
 
 function priceToNumber(priceVal) {
 	if (isNaN(priceVal) == false) {
-		return Number(priceVal)
+		return Number(priceVal);
 	}
-	priceVal = String(priceVal).toLowerCase()
+	priceVal = String(priceVal).toLowerCase();
 
 	if (priceVal == "undefined") {
-		return undefined
+		return undefined;
 	} else if (priceVal == "cheap") {
-		return 0
+		return 0;
 	} else if (priceVal == "moderate") {
-		return 1
+		return 1;
 	} else {
-		throw Error("Unknown price " + priceVal)
+		throw Error("Unknown price " + priceVal);
 	}
 }
 
 // try to eliminate some common variations in business naming
 function normalizeBizName(str) {
-	return str.toLowerCase()
-		.replaceAll("&", "and")
-		.replaceAll("-", " ")
+	return str.toLowerCase().replaceAll("&", "and").replaceAll("-", " ");
+}
+
+// remove undefined, null, and 0 length values
+function cleanObjectForDb(obj) {
+	for (const key in obj) {
+		if (obj[key] === undefined || obj[key] === null || obj[key]?.length == 0) {
+			delete obj[key]
+		}
+	}
+	return obj
+}
+
+// some log of a scrape that was made
+// title, status, body can be anything
+function saveLog(logStatus, logTitle, mainLogBody) {
+	fs.writeFileSync(`./logs/${Date.now()}.txt`, `STATUS: ${logStatus}\nTITLE: ${logTitle}\nTIME: ${String(new Date())}\nMAIN CONTENT:\n${mainLogBody}`)
 }
 
 // save object as OAV triplets to postgres
 async function saveToPostgres(dataObj, client) {
 	if (typeof dataObj._attrTypes !== "object" || dataObj._attrTypes === null) {
-	  throw Error("Must have _attrTypes key as an object");
+		throw Error("Must have _attrTypes key as an object");
 	}
 	// Clone the attrTypes and remove from dataObj
 	const attrTypes = JSON.parse(JSON.stringify(dataObj._attrTypes));
@@ -616,79 +616,73 @@ async function saveToPostgres(dataObj, client) {
 	const randomId = uuid.v4();
 
 	for (const [key, value] of Object.entries(dataObj)) {
-	  if (!key.startsWith("_") && String(value) !== "undefined" && String(value) !== "null") {
-	  if (key == getGeoAttrId("website")) continue
-		const queryStr = "INSERT INTO poiData(object, attribute, value, attributeType) VALUES($1, $2, $3, $4)";
-		await client.query(queryStr, [randomId, key, value, attrTypes[key]]);
-	  }
+		if (!key.startsWith("_")) {
+			const queryStr = "INSERT INTO poiData(object, attribute, value, attributeType) VALUES($1, $2, $3, $4)";
+			await client.query(queryStr, [randomId, key, value, attrTypes[key]]);
+		}
 	}
-  }
+}
 
 async function syncWithRemote(dataObj, client, saveToCsv = false) {
-	dataObj = JSON.parse(JSON.stringify(dataObj))
-	const remoteClientCall = await client.query("SELECT * FROM poiData")
-	const remoteData = {}
-	remoteClientCall.rows.forEach(row => {
+	// dataObj = JSON.parse(JSON.stringify(dataObj));
+	const remoteClientCall = await client.query("SELECT * FROM poiData");
+	const remoteData = {};
+	remoteClientCall.rows.forEach((row) => {
 		if (remoteData[row.object] === undefined) {
-			remoteData[row.object] = {}
+			remoteData[row.object] = {};
 		}
-		remoteData[row.object][row.attribute] = row.value
+		remoteData[row.object][row.attribute] = row.value;
 	});
 
 	// mapping from these random uuid's in memory to uuid's in remote
-	const thisToRemoteKey = {}
+	const thisToRemoteKey = {};
 
 	// event processing will come later...
 	for (const tKey in dataObj) {
 		if (dataObj[tKey].type == "event") {
-			delete dataObj[tKey]
-			continue
+			delete dataObj[tKey];
+			continue;
 		}
 
 		// make unique fingerprint for each poi based on poidata
-		const thisObjPrint = dataObj[tKey].name + dataObj[tKey].lattitude + dataObj[tKey].longitude
+		const thisObjPrint = dataObj[tKey].name + dataObj[tKey].lattitude + dataObj[tKey].longitude;
 		for (const rKey in remoteData) {
-			const remoteObjPrint = remoteData[rKey].name + remoteData[rKey].lattitude + remoteData[rKey].longitude
+			const remoteObjPrint = remoteData[rKey].name + remoteData[rKey].lattitude + remoteData[rKey].longitude;
 			if (remoteObjPrint == thisObjPrint) {
-				thisToRemoteKey[tKey] = rKey
+				thisToRemoteKey[tKey] = rKey;
 				// see what data differs between local and remote
 				for (const propKey in dataObj[tKey]) {
-					const tProperty = typeof dataObj[tKey][propKey] == "object" ?
-						JSON.stringify(dataObj[tKey][propKey]) :
-						String(dataObj[tKey][propKey])
+					const tProperty = typeof dataObj[tKey][propKey] == "object" ? JSON.stringify(dataObj[tKey][propKey]) : String(dataObj[tKey][propKey]);
 
-					const rProperty = typeof remoteData[rKey][propKey] == "object" ?
-						JSON.stringify(remoteData[rKey][propKey]) :
-						String(remoteData[rKey][propKey])
+					const rProperty = typeof remoteData[rKey][propKey] == "object" ? JSON.stringify(remoteData[rKey][propKey]) : String(remoteData[rKey][propKey]);
 
 					// if the two relevant keys are the same then remove them from net changes
 					if (tProperty === rProperty || (tProperty == "null" && rProperty == "undefined")) {
-						delete dataObj[tKey][propKey]
+						delete dataObj[tKey][propKey];
 					}
 				}
 			}
 		}
 	}
 
-	console.log("data obj is",dataObj)
+	console.log("data obj is", dataObj);
 	if (saveToCsv) {
-		fs.writeFileSync("./changes-export.csv", "object,attribute,value\n")
+		fs.writeFileSync("./changes-export.csv", "object,attribute,value\n");
 		for (var i = 0; i < dataObj.length; i++) {
 			for (const key in dataObj[i]) {
 				// don't update underscore'd keys
-				if (key.startsWith("_")) continue
-				fs.appendFileSync("./changes-export.csv", `"${thisToRemoteKey[i]}","${key}","${dataObj[i][key]}"\n`)
+				if (key.startsWith("_")) continue;
+				fs.appendFileSync("./changes-export.csv", `"${thisToRemoteKey[i]}","${key}","${dataObj[i][key]}"\n`);
 			}
 		}
 		return
 	}
 
-
 	for (var i = 0; i < dataObj.length; i++) {
-		if (JSON.stringify(dataObj[i]) == "{}") continue
+		if (JSON.stringify(dataObj[i]) == "{}") continue;
 		for (const key in dataObj[i]) {
 			// don't update underscore'd keys
-			if (key.startsWith("_")) continue
+			if (key.startsWith("_") || dataObj[i][key] == undefined || dataObj[i][key] == null) continue;
 
 			const queryStr = "UPDATE poiData SET value = $1 WHERE object = $2 AND attribute = $3";
 			const result = await client.query(queryStr, [dataObj[i][key], thisToRemoteKey[i], key]);

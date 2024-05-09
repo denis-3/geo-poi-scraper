@@ -259,11 +259,25 @@ async function findEntityIdByCriteria(type, locationName, nameContains) {
   });
 }
 
+function clearAllLogs() {
+	fs.readdir("./logs", (err, files) => {
+	  if (err) throw err;
+
+	  for (const file of files) {
+	    fs.unlink("./logs/" + file, err => {
+	      if (err) throw err;
+	    });
+	  }
+	});
+	console.log("All logs deleted")
+}
+
 // findEntityIdByCriteria('event', 'The Savoy Tivoli', 'Legal Hackers Happy Hour');
 
 
 // viewTableContent(tableName);
+exportTableToCsv(tableName, "./testing.csv")
 // resetPoiDataTable()
 // exportEventsToCSV(tableName)
 // exportCafesToCSV(tableName)
-// exportTableToCsv(tableName, "./testing.csv")
+// clearAllLogs()

@@ -3,3 +3,4 @@
 package-lock.json
 *.csv
 .DS_Store
+/logs
