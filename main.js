@@ -291,19 +291,9 @@ async function getEvents(city = "san-francisco") {
 	return meetupEventData;
 }
 
-// getEvents()
-
-// Local news function by neighborhood
 async function getLocalNews(neighborhood) {
-	console.log("starting getLocalNews...");
-	const browser = await puppeteer.launch();
-
-	// See https://www.reddit.com/r/AskSF/comments/16busau/new_to_sf_best_local_newspapers/ for inspiration
-	// Add News outlets? Might not be the right place if the goal is to do local news by neighborhood, although it is possible
-	// ABC7 News San Francisco
-	// SFist
-	// Hoodline
-
+	neighborhood = neighborhood.toLowerCase()
+	// sources
 	const neighborhoodNews = {
 		marina: {
 			rootUrl: "https://www.marinatimes.com/category/news"
@@ -325,165 +315,135 @@ async function getLocalNews(neighborhood) {
 		},
 	};
 
-	const newsPage = await browser.newPage();
-	await newsPage.goto(neighborhoodNews[neighborhood.toLowerCase()].rootUrl, {
-		waitUntil: "networkidle2",
+	// selectors to get articles
+	const linkSelectors = {
+		marina: 'a[class="item container"]',
+		ingleside: 'a[class="post-card__media"]',
+		richmond: 'h2[class="posttitle"] > a',
+		sunset: 'h2[class="posttitle"] > a',
+		mission: 'a[class="post-thumbnail-inner"]',
+	};
+
+	const configs = {
+		marina: {
+			categorySelector: "div.category",
+			authorSelector: "div.author",
+			dateSelector: "div.date",
+			titleSelector: "div.left > h1",
+			subtitleSelector: "div.subtitle",
+			contentSelector: ".content > p",
+		},
+		ingleside: {
+			categorySelector: 'a[class*="post-tag mr-sm"]',
+			authorSelector: "span.post-info__authors > a",
+			dateSelector: "div.post-info > time",
+			titleSelector: "h1.post-hero__title",
+			subtitleSelector: "p.post-hero__excerpt.text-acc",
+			contentSelector: 'article[class*="post-access-public"] > p',
+		},
+		richmond: {
+			categorySelector: 'a[class="post-lead-category"]',
+			// authorSelector: '',
+			dateSelector: "time.entry-date",
+			titleSelector: "h1.title",
+			// subtitleSelector: '',
+			contentSelector: 'section[class="entry"] > p',
+		},
+		sunset: {
+			categorySelector: 'a[class="post-lead-category"]',
+			// authorSelector: '',
+			dateSelector: "time.entry-date",
+			titleSelector: "h1.title",
+			// subtitleSelector: '',
+			contentSelector: 'section[class="entry"] > p',
+		},
+		mission: {
+			categorySelector: 'span[class="cat-links"] > a',
+			authorSelector: 'span[class="author vcard"] > a',
+			dateSelector: 'time[class="entry-date published"]',
+			titleSelector: "h1.entry-title ",
+			// subtitleSelector: '',
+			contentSelector: 'div[class="entry-content"] > p',
+		},
+	};
+
+	const newsArticlesPageFetch = await fetchWithTimeout(fetch(neighborhoodNews[neighborhood].rootUrl), 7500)
+	const newsArticlesPageText = await newsArticlesPageFetch.text()
+	const newsArticlesPage = cheerio.load(newsArticlesPageText)
+
+	const newsArticlesLinks = []
+	newsArticlesPage(linkSelectors[neighborhood]).each(function () {
+		newsArticlesLinks.push(newsArticlesPage(this).attr("href"))
 	});
 
-	const newsLinks = await newsPage.evaluate((neighborhood) => {
-		const linkSelectors = {
-			marina: 'a[class="item container"]',
-			ingleside: 'a[class="post-card__media"]',
-			richmond: 'h2[class="posttitle"] > a',
-			sunset: 'h2[class="posttitle"] > a',
-			mission: 'a[class="post-thumbnail-inner"]',
-		};
-		const selector = linkSelectors[neighborhood.toLowerCase()];
-		return Array.from(document.querySelectorAll(selector), (a) => a.getAttribute("href"));
-	}, neighborhood);
+	const finalData = []
 
-	console.log("newsLinks: ", newsLinks);
+	for (const link of newsArticlesLinks) {
+		const thisArticlePageFetch = await fetchWithTimeout(fetch(link), 7500)
+		const thisArticlePageText = await thisArticlePageFetch.text()
+		const thisArticlePage = cheerio.load(thisArticlePageText)
 
-	const newsPages = await browser.newPage();
-	let newsData = [];
-
-	for (const link of newsLinks) {
-		try {
-			console.log("Navigating to:", link);
-
-			await newsPages.goto(link, {
-				waitUntil: "networkidle0",
-				timeout: 60000,
-			});
-
-			// Leave this here for testing
-			/* const extractedEventPageData = await newsPages.evaluate((neighborhood) => {
-				console.log(" in extractedEventPageData")
-				let newsArticleObj = {}
-				newsArticleObj['category'] = '' || document.querySelector('a[class="post-lead-category"]').innerText;
-				newsArticleObj['author'] = '' || document.querySelector('').innerText;
-				newsArticleObj['date'] = '' || document.querySelector('time.entry-date').innerText;
-				newsArticleObj['title'] = '' || document.querySelector('h1.title').innerText;
-				newsArticleObj['subtitle'] = '' || document.querySelector('p.post-hero__excerpt.text-acc').innerText;
-				newsArticleObj['content'] = '' || Array.from(document.querySelectorAll('section[class="entry"] > p')).map(p => p.innerText);
-				return newsArticleObj;
-			}, neighborhood);
-
-			console.log("extractedEventPageData: ", extractedEventPageData) */
-
-			const extractedEventPageData = await newsPages.evaluate(
-				(neighborhood, link) => {
-					console.log(" in extractedEventPageData");
-					const configs = {
-						marina: {
-							categorySelector: "div.category",
-							authorSelector: "div.author",
-							dateSelector: "div.date",
-							titleSelector: "div.left > h1",
-							subtitleSelector: "div.subtitle",
-							contentSelector: ".content > p",
-						},
-						ingleside: {
-							categorySelector: 'a[class*="post-tag mr-sm"]',
-							authorSelector: "span.post-info__authors > a",
-							dateSelector: "div.post-info > time",
-							titleSelector: "h1.post-hero__title",
-							subtitleSelector: "p.post-hero__excerpt.text-acc",
-							contentSelector: 'article[class*="post-access-public"] > p',
-						},
-						richmond: {
-							categorySelector: 'a[class="post-lead-category"]',
-							// authorSelector: '',
-							dateSelector: "time.entry-date",
-							titleSelector: "h1.title",
-							// subtitleSelector: '',
-							contentSelector: 'section[class="entry"] > p',
-						},
-						sunset: {
-							categorySelector: 'a[class="post-lead-category"]',
-							// authorSelector: '',
-							dateSelector: "time.entry-date",
-							titleSelector: "h1.title",
-							// subtitleSelector: '',
-							contentSelector: 'section[class="entry"] > p',
-						},
-						mission: {
-							categorySelector: 'span[class="cat-links"] > a',
-							authorSelector: 'span[class="author vcard"] > a',
-							dateSelector: 'time[class="entry-date published"]',
-							titleSelector: "h1.entry-title ",
-							// subtitleSelector: '',
-							contentSelector: 'div[class="entry-content"] > p',
-						},
-					};
-
-					const config = configs[neighborhood.toLowerCase()];
-
-					let newsArticleObj = {
-						type: "news",
-						neighborhood: neighborhood,
-						category: "" || document.querySelector(config.categorySelector)?.innerText,
-						author: "" || document.querySelector(config.authorSelector)?.innerText,
-						date: "" || document.querySelector(config.dateSelector)?.innerText,
-						title: "" || document.querySelector(config.titleSelector)?.innerText,
-						subtitle: "" || document.querySelector(config.subtitleSelector)?.innerText,
-						content: "" ||
-							Array.from(document.querySelectorAll(config.contentSelector))
-							.map((p) => p.innerText)
-							.join("<br><br>"),
-						url: link,
-						_attrTypes: {
-							type: "type",
-							neighborhood: "string",
-							category: "string",
-							author: "string",
-							date: "date",
-							title: "string",
-							subtitle: "string",
-							content: "string",
-							url: "string",
-						},
-					};
-					return newsArticleObj;
-				},
-				neighborhood,
-				link
-			);
-			newsData.push(extractedEventPageData);
-		} catch (error) {
-			console.error(`Error navigating to ${link}:`, error);
+		const tConfig = configs[neighborhood]
+		const extractedData = {
+			type: "news",
+			neighborhood: neighborhood,
+			category: "" || thisArticlePage(tConfig.categorySelector).prop("textContent"),
+			author: "" || thisArticlePage(tConfig.authorSelector).prop("textContent"),
+			date: "" || thisArticlePage(tConfig.dateSelector).prop("textContent"),
+			title: "" || thisArticlePage(tConfig.titleSelector).prop("textContent"),
+			subtitle: "" || thisArticlePage(tConfig.subtitleSelector).prop("textContent"),
+			url: link,
+			_attrTypes: {
+				type: "type",
+				neighborhood: "string",
+				category: "string",
+				author: "string",
+				date: "date",
+				title: "string",
+				subtitle: "string",
+				content: "string",
+				url: "string",
+			},
 		}
+		for (const key in extractedData) {
+			if (key.startsWith("_") || extractedData[key]?.trim == undefined) continue
+			extractedData[key] = extractedData[key].trim()
+			if (key == "author") {
+				extractedData["author"] = extractedData["author"].replace("by ", "")
+			} else if (key == "date") {
+				console.log(extractedData["date"])
+				extractedData["date"] = new Date(extractedData["date"])
+			}
+		}
+		// console.log(extractedData)
+		finalData.push(extractedData)
 	}
-	await browser.close();
-	return newsData;
+	return finalData
 }
 
-// getLocalNews("mission")
 
-// Get Events by Local Neighborhood, this finds neighborhood-specific outlets
-async function getLocalEvents(neighborhood) {
-	console.log("starting getLocalEvents...");
-	const browser = await puppeteer.launch();
-
-	if (neighborhood.toLowerCase() === "inner sunset") {
-		const sunsetNewsPage = await browser.newPage();
-		await sunsetNewsPage.goto(`https://www.inner-sunset.org/events-2/`, {
-			waitUntil: "networkidle2",
-		});
-	} else if (neighborhood.toLowerCase() === "cole valley") {
-		const coleValleyNewsPage = await browser.newPage();
-		await coleValleyNewsPage.goto(`http://www.colevalleysf.com/local-happenings.html`, {
-			waitUntil: "networkidle2",
-		});
-	} else if (neighborhood.toLowerCase() === "nopa") {
-		const nopaNewsPage = await browser.newPage();
-		await nopaNewsPage.goto(`https://www.nopna.org/events`, {
-			waitUntil: "networkidle2",
-		});
-	}
-}
-
-// getLocalEvents("inner-sunset")
+// // Get Events by Local Neighborhood, this finds neighborhood-specific outlets
+// async function getLocalEvents(neighborhood) {
+// 	console.log("starting getLocalEvents...");
+// 	const browser = await puppeteer.launch();
+//
+// 	if (neighborhood.toLowerCase() === "inner sunset") {
+// 		const sunsetNewsPage = await browser.newPage();
+// 		await sunsetNewsPage.goto(`https://www.inner-sunset.org/events-2/`, {
+// 			waitUntil: "networkidle2",
+// 		});
+// 	} else if (neighborhood.toLowerCase() === "cole valley") {
+// 		const coleValleyNewsPage = await browser.newPage();
+// 		await coleValleyNewsPage.goto(`http://www.colevalleysf.com/local-happenings.html`, {
+// 			waitUntil: "networkidle2",
+// 		});
+// 	} else if (neighborhood.toLowerCase() === "nopa") {
+// 		const nopaNewsPage = await browser.newPage();
+// 		await nopaNewsPage.goto(`https://www.nopna.org/events`, {
+// 			waitUntil: "networkidle2",
+// 		});
+// 	}
+// }
 
 async function main() {
 	// targeted amenities for scraping
@@ -492,25 +452,24 @@ async function main() {
 
 	const finalResults = []
 
-	// const neighborhoods = ["marina", "ingleside", "mission", "richmond", "sunset"]
-	//
-	// let neighborhoodNews;
-	// for (neighborhood in neighborhoods) {
-	// 	neighborhoodNews = await getLocalNews(neighborhoods[neighborhood])
-	// 	finalResults.push(...neighborhoodNews)
-	// }
+	const neighborhoods = ["marina", "ingleside", "mission", "richmond", "sunset"]
 
-	const cafeResults = await getCafeAmenities()
-	finalResults.push(...cafeResults)
-
-	const eventResults = await getEvents();
-	finalResults.push(...eventResults)
-
-	// get other amenities (it takes a bit)
-	for (var i = 0; i < targetAmenities.length; i++) {
-		const genResults = await getGenericAmenity(targetAmenities[i]);
-		finalResults.push(...genResults);
+	for (neighborhood in neighborhoods) {
+		const neighborhoodNews = await getLocalNews(neighborhoods[neighborhood])
+		finalResults.push(...neighborhoodNews)
 	}
+
+	// const cafeResults = await getCafeAmenities()
+	// finalResults.push(...cafeResults)
+	//
+	// const eventResults = await getEvents();
+	// finalResults.push(...eventResults)
+	//
+	// // get other amenities (it takes a bit)
+	// for (var i = 0; i < targetAmenities.length; i++) {
+	// 	const genResults = await getGenericAmenity(targetAmenities[i]);
+	// 	finalResults.push(...genResults);
+	// }
 
 	// console.log(finalResults);
 
@@ -600,6 +559,7 @@ function cleanObjectForDb(obj) {
 // some log of a scrape that was made
 // title, status, body can be anything
 function saveLog(logStatus, logTitle, mainLogBody) {
+	return false
 	fs.writeFileSync(`./logs/${Date.now()}.txt`, `STATUS: ${logStatus}\nTITLE: ${logTitle}\nTIME: ${String(new Date())}\nMAIN CONTENT:\n${mainLogBody}`)
 }
 
