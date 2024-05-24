@@ -54,6 +54,9 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 		var businessDesc = undefined
 		var businessImg = undefined
 		var ddgData = {}
+		var yelpDataText = "no text"
+		var businessNeighborhood = ""
+		const bizFeatures = []
 		try {
 			console.log("Getting information for business (", i, ")", e.tags.name)
 
@@ -61,6 +64,16 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 			ddgData = await ddgPoiFetch(e.tags.name)
 
 			businessDesc = ddgData.embed?.description
+
+			// get neighborhood of biz
+			const geocodeUrl = `https://opencagedata.com/demo/proxy?url=${encodeURIComponent(`https://api.opencagedata.com/geocode/v1/json?q=${ddgData.address}&key=YOUR-API-KEY&language=en&pretty=1`)}&format=json`
+			const geocodeFetch = await fetchWithTimeout(fetch(geocodeUrl), 7500)
+			if (geocodeFetch.status == 200) {
+				const geocodeJson = await geocodeFetch.json()
+				businessNeighborhood = geocodeJson.results[0].components.neighbourhood ?? geocodeJson.results[0].components.suburb
+			} else {
+				console.log("Invalid geocoding status", geocodeFetch.status)
+			}
 
 			var bizYelpLink = ddgData.url;
 			// search for business on yelp if needed (tripadvisor doesnt have business description)
@@ -79,8 +92,27 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 
 			// get business yelp page
 			const yelpDataFetch = await fetchWithTimeout(fetch(bizYelpLink), 7500);
-			const yelpDataText = await yelpDataFetch.text();
+			yelpDataText = await yelpDataFetch.text();
 			const yelpDataHtml = cheerio.load(yelpDataText);
+			// extract and parse json in the yelp response which contains many useful biz properties
+			const bizJsonData = JSON.parse(yelpDataHtml(`script[type=application/json]`).prop("textContent").slice(4, -3).replaceAll("&quot;", `"`))
+			for (const key in bizJsonData) {
+				if (key.includes("}).0.properties.")) {
+					// properties of interest
+					const propertyMaps = {
+						"dogs_allowed": "Dogs Allowed",
+						"wifi_options": "Has WiFi",
+						"has_outdoor_seating": "Has outdoor seating",
+						"RestaurantsTakeOut": "Offers takeout",
+						"Caters": "Offers catering",
+						"BusinessParking": "Has parking",
+						"has_bike_parking": "Has Bike Parking"
+					}
+					if (Object.keys(propertyMaps).includes(bizJsonData[key].alias)) {
+						bizFeatures.push([propertyMaps[bizJsonData[key].alias], bizJsonData[key].isActive])
+					}
+				}
+			}
 
 			// SEO meta tags are useful to get information
 			const yelpPageTitle = normalizeBizName(yelpDataHtml("meta[property='og:title']").attr("content"));
@@ -88,12 +120,12 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 				businessDesc = yelpDataHtml("meta[property='og:description']").attr("content");
 				businessImg = yelpDataHtml("meta[property='og:image']").attr("content");
 			}
-			saveLog("success", `Generic amenity scrape for ${e.tags.name}`, yelpDataText)
 		} catch (err) {
-			saveLog("error", `Generic amenity scrape for ${e.tags.name}`, err)
+			saveLog("error", `Generic amenity scrape for ${e.tags.name}`, yelpDataText)
 			console.error("Failed getting business description from yelp, ", err);
 		}
 
+		const address = `${e.tags["addr:housenumber"] | e.tags["addr:number"]} ${e.tags["addr:street"]}`
 		const dataObj = {
 			type: amenityType,
 			// type: "point of interest",
@@ -101,12 +133,13 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 			lattitude: e.lat,
 			longitude: e.lon,
 			name: e.tags.name,
-			address: `${e.tags["addr:housenumber"] | e.tags["addr:number"]} ${e.tags["addr:street"]}`,
-			hours: e.tags.opening_hours,
+			address: ddgData.address ?? address,
+			hours: e.tags.opening_hours ?? e.tags["opening_hours:covid19"],
 			description: businessDesc,
 			image: businessImg ?? ddgData?.image ?? ddgData?.embed?.image,
-			phoneNumber: ddgData.phoneNumber,
+			phoneNumber: ddgData.phoneNumber ?? e.tags.phone,
 			avatar: ddgData?.embed?.icon,
+			neighborhood: businessNeighborhood,
 			_attrTypes: {
 				type: "type",
 				website: "url",
@@ -118,10 +151,17 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 				phoneNumber: "phoneNumber",
 				image: "image",
 				avatar: "image",
+				neighborhood: "string"
 			},
 			// stored just in case for reference later
 			_allOsmResults: JSON.parse(JSON.stringify(e)),
 		};
+
+		bizFeatures.forEach(item => {
+			dataObj[item[0]] = item[1]
+			dataObj._attrTypes[item[0]] = "bool"
+		})
+
 		formattedResults.push(dataObj);
 	}
 
@@ -131,7 +171,6 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 async function getCafeAmenities() {
 	console.log("Starting getCafeAmenities...");
 	const cafeResults = await getGenericAmenity("cafe");
-	// console.log("Initial results:", cafeResults);
 	for (var _i = 0; _i < cafeResults.length; _i++) {
 		const data = cafeResults[_i];
 		data.type = "cafe";
@@ -280,7 +319,6 @@ async function getEvents(city = "san-francisco") {
 			// console.log("extractedEventPageData1: ", extractedEventPageData[1])
 			// console.log("extractedEventPageData2: ", extractedEventPageData[2])
 			meetupEventData.push(relevantEventData);
-			saveLog("success", `Event scrape for ${link}`, thisEventPageText)
 		} catch (error) {
 			saveLog("error", `Event scrape for ${link}`, error)
 			console.error(`Error navigating to ${link}:`, error);
@@ -449,30 +487,30 @@ async function main() {
 	// targeted amenities for scraping
 	// this is just a start, more can be added
 	const targetAmenities = ["car_rental", "fast_food", "restaurant", "library", "fuel", "bank", "cinema"]
+	const neighborhoods = ["marina", "ingleside", "mission", "richmond", "sunset"]
 
 	const finalResults = []
-
-	const neighborhoods = ["marina", "ingleside", "mission", "richmond", "sunset"]
 
 	for (neighborhood in neighborhoods) {
 		const neighborhoodNews = await getLocalNews(neighborhoods[neighborhood])
 		finalResults.push(...neighborhoodNews)
 	}
 
-	// const cafeResults = await getCafeAmenities()
-	// finalResults.push(...cafeResults)
-	//
-	// const eventResults = await getEvents();
-	// finalResults.push(...eventResults)
-	//
-	// // get other amenities (it takes a bit)
-	// for (var i = 0; i < targetAmenities.length; i++) {
-	// 	const genResults = await getGenericAmenity(targetAmenities[i]);
-	// 	finalResults.push(...genResults);
-	// }
+	const cafeResults = await getCafeAmenities()
+	finalResults.push(...cafeResults)
+
+	const eventResults = await getEvents();
+	finalResults.push(...eventResults)
+
+	// get other amenities (it takes a bit)
+	for (var i = 0; i < targetAmenities.length; i++) {
+		const genResults = await getGenericAmenity(targetAmenities[i]);
+		finalResults.push(...genResults);
+	}
 
 	// console.log(finalResults);
 
+	// convert final results to geo mappings
 	finalResults.forEach((elm) => {
 		for (const key in elm) {
 			const tmp = elm[key];
@@ -487,7 +525,6 @@ async function main() {
 
 		for (let i = 0; i < finalResults.length; i++) {
 			const cleaned = cleanObjectForDb(finalResults[i])
-			console.log(cleaned)
 			await saveToPostgres(cleaned, dbConfig);
 		}
 	});
@@ -559,7 +596,6 @@ function cleanObjectForDb(obj) {
 // some log of a scrape that was made
 // title, status, body can be anything
 function saveLog(logStatus, logTitle, mainLogBody) {
-	return false
 	fs.writeFileSync(`./logs/${Date.now()}.txt`, `STATUS: ${logStatus}\nTITLE: ${logTitle}\nTIME: ${String(new Date())}\nMAIN CONTENT:\n${mainLogBody}`)
 }
 

@@ -11,7 +11,9 @@ const MAPPING = {
 }
 
 function getGeoAttrId(attrText) {
-	return MAPPING[attrText] ?? attrText
+	// for readability don't convert to attr uuids (for now)
+	return attrText
+	// return MAPPING[attrText] ?? attrText
 }
 
 module.exports = getGeoAttrId
