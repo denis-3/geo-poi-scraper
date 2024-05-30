@@ -8,7 +8,9 @@ const fs = require("fs");
 
 const OPA_API_URL = process.env.OPA_API_URL;
 
-async function getPoisFromOverpass(poiType) {
+// poi query depends on what type of poi is needed
+// for example "amenity=cafe" or "tourism=hotal"
+async function getPoisFromOverpass(poiQuery) {
 	const initialQuery = await fetch(OPA_API_URL, {
 		method: "POST",
 		body: "data=" +
@@ -18,7 +20,7 @@ async function getPoisFromOverpass(poiType) {
 		[maxsize:1000000]
 		;
 		node(37.71044257039148,-122.52330780029298,37.80647004655113,-122.34684155555281)
-		[amenity=${poiType}];
+		[${poiQuery}];
 		out;`),
 	});
 	if (!initialQuery.ok) {
@@ -40,13 +42,15 @@ async function ddgPoiFetch(poiName) {
 	return ddgData.results[0];
 }
 
-async function getGenericAmenity(amenityType, tryYelpSearch = true) {
-	const osmResults = await getPoisFromOverpass(amenityType)
+async function getGenericPoi(amenityQueryTag, amenityType) {
+	const osmResults = await getPoisFromOverpass(`${amenityQueryTag}=${amenityType}`)
 	if (osmResults === undefined) {
 		console.error("Error!!")
 		return
 	}
+
 	const formattedResults = []
+	var retriedAlready = false
 
 	for (var i = 0; i < osmResults.length; i++) {
 		const e = osmResults[i]
@@ -66,11 +70,16 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 			businessDesc = ddgData.embed?.description
 
 			// get neighborhood of biz
-			const geocodeUrl = `https://opencagedata.com/demo/proxy?url=${encodeURIComponent(`https://api.opencagedata.com/geocode/v1/json?q=${ddgData.address}&key=YOUR-API-KEY&language=en&pretty=1`)}&format=json`
+			const geocodeUrl = `https://geocode.maps.co/search?q=${encodeURIComponent(ddgData.address)}&api_key=${process.env.GEOCODING_API_KEY}`
 			const geocodeFetch = await fetchWithTimeout(fetch(geocodeUrl), 7500)
 			if (geocodeFetch.status == 200) {
 				const geocodeJson = await geocodeFetch.json()
-				businessNeighborhood = geocodeJson.results[0].components.neighbourhood ?? geocodeJson.results[0].components.suburb
+				for (var j = 0; j < geocodeJson.length; j++) {
+					// find relevant geocoding result
+					if (geocodeJson[j].type == amenityType) {
+						businessNeighborhood = geocodeJson[j].display_name.split(", ")[3]
+					}
+				}
 			} else {
 				console.log("Invalid geocoding status", geocodeFetch.status)
 			}
@@ -106,7 +115,12 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 						"RestaurantsTakeOut": "Offers takeout",
 						"Caters": "Offers catering",
 						"BusinessParking": "Has parking",
-						"has_bike_parking": "Has Bike Parking"
+						"has_bike_parking": "Has bike parking",
+						"accepts_bitcoin": "Accepts Bitcoin",
+						"wifi_options": "Has WiFi",
+						"is_wheelchair_accessible": "Is accessible via wheelchair",
+						"accepts_android_pay": "Accepts Android Pay",
+						"accepts_apple_pay": "Accepts Apple Pay",
 					}
 					if (Object.keys(propertyMaps).includes(bizJsonData[key].alias)) {
 						bizFeatures.push([propertyMaps[bizJsonData[key].alias], bizJsonData[key].isActive])
@@ -120,10 +134,22 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 				businessDesc = yelpDataHtml("meta[property='og:description']").attr("content");
 				businessImg = yelpDataHtml("meta[property='og:image']").attr("content");
 			}
+
+			// reset retry flag
+			retriedAlready = false
 		} catch (err) {
 			saveLog("error", `Generic amenity scrape for ${e.tags.name}`, yelpDataText)
 			console.error("Failed getting business description from yelp, ", err);
+			// retry scraping routine up to one time
+			if (!retriedAlready) {
+				i--;
+				retriedAlready = true
+			} else {
+				retriedAlready = false
+			}
 		}
+
+		if (retriedAlready) continue
 
 		const address = `${e.tags["addr:housenumber"] | e.tags["addr:number"]} ${e.tags["addr:street"]}`
 		const dataObj = {
@@ -134,7 +160,7 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 			longitude: e.lon,
 			name: e.tags.name,
 			address: ddgData.address ?? address,
-			hours: e.tags.opening_hours ?? e.tags["opening_hours:covid19"],
+			hours: e.tags.opening_hours ?? e.tags["opening_hours:covid19"] ?? ddgData.hours,
 			description: businessDesc,
 			image: businessImg ?? ddgData?.image ?? ddgData?.embed?.image,
 			phoneNumber: ddgData.phoneNumber ?? e.tags.phone,
@@ -170,7 +196,7 @@ async function getGenericAmenity(amenityType, tryYelpSearch = true) {
 
 async function getCafeAmenities() {
 	console.log("Starting getCafeAmenities...");
-	const cafeResults = await getGenericAmenity("cafe");
+	const cafeResults = await getGenericPoi("amenity", "cafe");
 	for (var _i = 0; _i < cafeResults.length; _i++) {
 		const data = cafeResults[_i];
 		data.type = "cafe";
@@ -449,7 +475,6 @@ async function getLocalNews(neighborhood) {
 			if (key == "author") {
 				extractedData["author"] = extractedData["author"].replace("by ", "")
 			} else if (key == "date") {
-				console.log(extractedData["date"])
 				extractedData["date"] = new Date(extractedData["date"])
 			}
 		}
@@ -502,9 +527,12 @@ async function main() {
 	const eventResults = await getEvents();
 	finalResults.push(...eventResults)
 
+	const hotelResults = await getGenericPoi("tourism", "hotel")
+	finalResults.push(...hotelResults)
+
 	// get other amenities (it takes a bit)
 	for (var i = 0; i < targetAmenities.length; i++) {
-		const genResults = await getGenericAmenity(targetAmenities[i]);
+		const genResults = await getGenericPoi("amenity", targetAmenities[i]);
 		finalResults.push(...genResults);
 	}
 
