@@ -61,6 +61,9 @@ async function getGenericPoi(amenityQueryTag, amenityType) {
 		var yelpDataText = "no text"
 		var businessNeighborhood = ""
 		const bizFeatures = []
+		var starRating = undefined
+		var businessHours = e.tags.opening_hours ?? e.tags["opening_hours:covid19"] ?? ddgData.hours
+		var businessYearEst = undefined
 		try {
 			console.log("Getting information for business (", i, ")", e.tags.name)
 
@@ -103,9 +106,21 @@ async function getGenericPoi(amenityQueryTag, amenityType) {
 			const yelpDataFetch = await fetchWithTimeout(fetch(bizYelpLink), 7500);
 			yelpDataText = await yelpDataFetch.text();
 			const yelpDataHtml = cheerio.load(yelpDataText);
+
+			// SEO meta tags are useful to get information
+			const yelpPageTitle = normalizeBizName(yelpDataHtml("meta[property='og:title']").attr("content"));
+			if (ddgData.url?.includes("yelp.com") || yelpPageTitle.includes(normalizeBizName(e.tags.name))) {
+				businessDesc = yelpDataHtml("meta[property='og:description']").attr("content");
+				businessImg = yelpDataHtml("meta[property='og:image']").attr("content");
+			} else {
+				// dont scrape yelp page if it doesnt match business name
+				continue
+			}
+
 			// extract and parse json in the yelp response which contains many useful biz properties
 			const bizJsonData = JSON.parse(yelpDataHtml(`script[type=application/json]`).prop("textContent").slice(4, -3).replaceAll("&quot;", `"`))
 			for (const key in bizJsonData) {
+				// look for useful business features
 				if (key.includes("}).0.properties.")) {
 					// properties of interest
 					const propertyMaps = {
@@ -125,21 +140,33 @@ async function getGenericPoi(amenityQueryTag, amenityType) {
 					if (Object.keys(propertyMaps).includes(bizJsonData[key].alias)) {
 						bizFeatures.push([propertyMaps[bizJsonData[key].alias], bizJsonData[key].isActive])
 					}
+				} else if (key.endsWith(".operationHours.regularHoursMergedWithSpecialHoursForCurrentDay")) {
+					// look for business hours
+					const hours = JSON.stringify(bizJsonData[key].hours.json)
+					if (hours != undefined && hours !== "null") {
+						businessHours = hours
+					}
+				} else if (key.endsWith("}).history")) {
+					// look for year established
+					const year = bizJsonData[key].yearEstablished
+					if (!isNaN(year) && year !== null && String(year)?.length == 4) {
+						businessYearEst = new Date(String(bizJsonData[key].yearEstablished))
+					}
 				}
 			}
 
-			// SEO meta tags are useful to get information
-			const yelpPageTitle = normalizeBizName(yelpDataHtml("meta[property='og:title']").attr("content"));
-			if (ddgData.url?.includes("yelp.com") || yelpPageTitle.includes(normalizeBizName(e.tags.name))) {
-				businessDesc = yelpDataHtml("meta[property='og:description']").attr("content");
-				businessImg = yelpDataHtml("meta[property='og:image']").attr("content");
-			}
+			yelpDataHtml("div > span[data-font-weight=semibold]").each(function() {
+				const textContentParse = Number(yelpDataHtml(this).prop("textContent"))
+				if (starRating == undefined && !isNaN(textContentParse) && textContentParse > 0 && textContentParse < 5) {
+					starRating = textContentParse
+				}
+			})
 
 			// reset retry flag
 			retriedAlready = false
 		} catch (err) {
-			saveLog("error", `Generic amenity scrape for ${e.tags.name}`, yelpDataText)
-			console.error("Failed getting business description from yelp, ", err);
+			saveLog("error", `Generic amenity scrape for ${e.tags.name}`, `${err}\n\n\n${yelpDataText}`)
+			console.error("Failed in generic scraping routine", err);
 			// retry scraping routine up to one time
 			if (!retriedAlready) {
 				i--;
@@ -160,12 +187,15 @@ async function getGenericPoi(amenityQueryTag, amenityType) {
 			longitude: e.lon,
 			name: e.tags.name,
 			address: ddgData.address ?? address,
-			hours: e.tags.opening_hours ?? e.tags["opening_hours:covid19"] ?? ddgData.hours,
+			hours: businessHours,
 			description: businessDesc,
 			image: businessImg ?? ddgData?.image ?? ddgData?.embed?.image,
 			phoneNumber: ddgData.phoneNumber ?? e.tags.phone,
 			avatar: ddgData?.embed?.icon,
 			neighborhood: businessNeighborhood,
+			starRating: starRating,
+			establishedDate: businessYearEst,
+			reviewsUrl: ddgData.url,
 			_attrTypes: {
 				type: "type",
 				website: "url",
@@ -177,7 +207,10 @@ async function getGenericPoi(amenityQueryTag, amenityType) {
 				phoneNumber: "phoneNumber",
 				image: "image",
 				avatar: "image",
-				neighborhood: "string"
+				neighborhood: "string",
+				starRating: "float",
+				establishedDate: "date",
+				reviewsUrl: "url"
 			},
 			// stored just in case for reference later
 			_allOsmResults: JSON.parse(JSON.stringify(e)),
@@ -234,14 +267,11 @@ async function getCafeAmenities() {
 				data.hours = JSON.stringify(ddgData.hours);
 			}
 
-			data.price = priceToNumber(ddgData.price);
-			data.reviewsWebsite = ddgData.url;
-			data.menuWebsite = menuUrl;
+			data.price = priceToNumber(ddgData.price)
+			data.menuWebsite = menuUrl
 			data._attrTypes = {
 				price: "int",
-				reviewsWebsite: "url",
-				amenities: "string",
-				menuWebsite: "website",
+				menuWebsite: "website"
 			};
 		}
 	}
@@ -252,7 +282,6 @@ async function getCafeAmenities() {
 async function getEvents(city = "san-francisco") {
 	console.log("starting getEvents...");
 	const encounteredEvents = [];
-	const browser = await puppeteer.launch();
 
 	// Meetup.com
 	const meetupPageFetch = await fetchWithTimeout(fetch(`https://www.meetup.com/find/?eventType=inPerson&source=EVENTS&location=us--ca--${city}&distance=tenMiles`), 7500);
@@ -285,7 +314,6 @@ async function getEvents(city = "san-francisco") {
 
 	console.log("filteredEventLinks: ", filteredEventLinks);
 
-	const eventsPages = await browser.newPage();
 	let meetupEventData = [];
 
 	// For each link, navigate and extract relevant information
@@ -351,7 +379,6 @@ async function getEvents(city = "san-francisco") {
 		}
 	}
 
-	await browser.close();
 	return meetupEventData;
 }
 
@@ -624,6 +651,7 @@ function cleanObjectForDb(obj) {
 // some log of a scrape that was made
 // title, status, body can be anything
 function saveLog(logStatus, logTitle, mainLogBody) {
+	if (process.env.LOGS_OFF == "true") return false
 	fs.writeFileSync(`./logs/${Date.now()}.txt`, `STATUS: ${logStatus}\nTITLE: ${logTitle}\nTIME: ${String(new Date())}\nMAIN CONTENT:\n${mainLogBody}`)
 }
 
@@ -689,7 +717,6 @@ async function syncWithRemote(dataObj, client, saveToCsv = false) {
 		}
 	}
 
-	console.log("data obj is", dataObj);
 	if (saveToCsv) {
 		fs.writeFileSync("./changes-export.csv", "object,attribute,value\n");
 		for (var i = 0; i < dataObj.length; i++) {
