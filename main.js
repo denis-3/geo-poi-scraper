@@ -10,7 +10,7 @@ const OPA_API_URL = process.env.OPA_API_URL;
 
 // poi query depends on what type of poi is needed
 // for example "amenity=cafe" or "tourism=hotal"
-async function getPoisFromOverpass(poiQuery) {
+async function getPoisFromOverpass(poiQuery, limit = 10) {
 	const initialQuery = await fetch(OPA_API_URL, {
 		method: "POST",
 		body: "data=" +
@@ -28,7 +28,7 @@ async function getPoisFromOverpass(poiQuery) {
 		return
 	}
 	const result = await initialQuery.json();
-	return result.elements.filter((x) => x?.tags?.website !== undefined).slice(0, 10);
+	return result.elements.filter((x) => x?.tags?.website !== undefined).slice(0, limit);
 }
 
 async function ddgPoiFetch(poiName) {
@@ -43,6 +43,7 @@ async function ddgPoiFetch(poiName) {
 }
 
 async function getGenericPoi(amenityQueryTag, amenityType) {
+	console.log("Starting getGenericPoi for key-value pair", amenityQueryTag, "=", amenityType, "...")
 	const osmResults = await getPoisFromOverpass(`${amenityQueryTag}=${amenityType}`)
 	if (osmResults === undefined) {
 		console.error("Error!!")
@@ -383,6 +384,7 @@ async function getEvents(city = "san-francisco") {
 }
 
 async function getLocalNews(neighborhood) {
+	console.log("Starting getLocalNews for neighborhood", neighborhood, "...")
 	neighborhood = neighborhood.toLowerCase()
 	// sources
 	const neighborhoodNews = {
@@ -543,46 +545,50 @@ async function main() {
 
 	const finalResults = []
 
-	for (neighborhood in neighborhoods) {
-		const neighborhoodNews = await getLocalNews(neighborhoods[neighborhood])
-		finalResults.push(...neighborhoodNews)
-	}
-
-	const cafeResults = await getCafeAmenities()
-	finalResults.push(...cafeResults)
-
-	const eventResults = await getEvents();
-	finalResults.push(...eventResults)
-
-	const hotelResults = await getGenericPoi("tourism", "hotel")
-	finalResults.push(...hotelResults)
-
-	// get other amenities (it takes a bit)
-	for (var i = 0; i < targetAmenities.length; i++) {
-		const genResults = await getGenericPoi("amenity", targetAmenities[i]);
-		finalResults.push(...genResults);
-	}
-
-	// console.log(finalResults);
-
-	// convert final results to geo mappings
-	finalResults.forEach((elm) => {
-		for (const key in elm) {
-			const tmp = elm[key];
-			delete elm[key];
-			elm[getGeoAttrId(key)] = tmp;
+	try {
+		for (neighborhood in neighborhoods) {
+			const neighborhoodNews = await getLocalNews(neighborhoods[neighborhood])
+			finalResults.push(...neighborhoodNews)
 		}
-	});
 
-	// data can be just pushed to remote, or synced with it
-	withDbClient(async (dbConfig) => {
-		// await syncWithRemote(finalResults, dbConfig, true)
+		const cafeResults = await getCafeAmenities()
+		finalResults.push(...cafeResults)
 
-		for (let i = 0; i < finalResults.length; i++) {
-			const cleaned = cleanObjectForDb(finalResults[i])
-			await saveToPostgres(cleaned, dbConfig);
+		const eventResults = await getEvents();
+		finalResults.push(...eventResults)
+
+		const hotelResults = await getGenericPoi("tourism", "hotel")
+		finalResults.push(...hotelResults)
+
+		// get other amenities (it takes a bit)
+		for (var i = 0; i < targetAmenities.length; i++) {
+			const genResults = await getGenericPoi("amenity", targetAmenities[i]);
+			finalResults.push(...genResults);
 		}
-	});
+		// console.log(finalResults);
+	} catch (e) {
+		console.error("Uncaught error! ", e)
+	} finally {
+		console.log("Processing results...")
+		// convert final results to geo mappings
+		finalResults.forEach((elm) => {
+			for (const key in elm) {
+				const tmp = elm[key];
+				delete elm[key];
+				elm[getGeoAttrId(key)] = tmp;
+			}
+		});
+
+		// data can be just pushed to remote, or synced with it
+		withDbClient(async (dbConfig) => {
+			// await syncWithRemote(finalResults, dbConfig, true)
+
+			for (let i = 0; i < finalResults.length; i++) {
+				const cleaned = cleanObjectForDb(finalResults[i])
+				await saveToPostgres(cleaned, dbConfig);
+			}
+		});
+	}
 }
 
 main();

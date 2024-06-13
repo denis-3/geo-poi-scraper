@@ -13,7 +13,7 @@ First, make sure that NodeJS and PostgreSQL are installed. Then, make a `.env` f
 * `GEOCODING_API_KEY`: API key for the geocoding service that is used. Get an API key at `geocode.maps.co`
 * `LOGS_OFF` (optional): Set this to `"true"` to turn off saving logs to text files
 
-Run `npm install` to install the dependencies, then run `node main.js` for the main scraping. There is also a file called `dbHelper.js` which contains some useful utility functions (like clearing logs and resetting the DB).
+Run `npm install` to install the dependencies, then run `node main.js` for the main scraping. There is also a file called `dbHelper.js` which contains some useful utility functions (like clearing logs and resetting the DB); these functions are commented at the end of the file.
 
 ## Code Description
 
@@ -33,4 +33,4 @@ News stories from local news outlets are scraped using `getLocalNews()`. Many ne
 
 ### Data Management
 
-There are also some functions for data handling and syncing with the DB. `saveToPostgres()` directly pushes data to the DB, and `syncWithRemote()` adds only makes the necessary updates to the data on the DB (and it can also produce a CSV output of what changes the DB does not have).
+There are also some functions for data handling and syncing with the DB. `saveToPostgres()` directly pushes data to the DB, and `syncWithRemote()` only makes the necessary updates to the data on the DB (it can also export a CSV of the changes).
