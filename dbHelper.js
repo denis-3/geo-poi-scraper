@@ -272,12 +272,40 @@ function clearAllLogs() {
 	console.log("All logs deleted")
 }
 
+// get various statistics about the table like number of objects, percent presence of attributes
+async function tableStats() {
+	await withDbClient(async (client) => {
+		const objectIdsFound = {}
+		const attributeCount = {}
+		const res = await client.query("SELECT * FROM poidata");
+		for (var i = 0; i < res.rows.length; i++) {
+			const row = res.rows[i]
+			objectIdsFound[row.object] = true
+			if (attributeCount[row.attribute] == undefined) {
+				attributeCount[row.attribute] = 1
+			} else {
+				attributeCount[row.attribute] += 1
+			}
+		}
+		const totalObjs = Object.keys(objectIdsFound).length
+		console.log("Total row count", res.rows.length)
+		console.log("Total unique object count", totalObjs)
+		const uniqueAttributes = Object.keys(attributeCount)
+		for (var i = 0; i < uniqueAttributes.length; i++) {
+			const thisAttr = uniqueAttributes[i]
+			const pct = Number((100 * attributeCount[thisAttr] / totalObjs).toFixed(2))
+			console.log("Total count of attribute", thisAttr, attributeCount[thisAttr], "(", pct, "%)")
+		}
+	});
+}
+
 // findEntityIdByCriteria('event', 'The Savoy Tivoli', 'Legal Hackers Happy Hour');
 
 
 // viewTableContent(tableName);
-exportTableToCsv(tableName, "./testing.csv")
+// exportTableToCsv(tableName, "./testing.csv")
 // resetPoiDataTable()
 // exportEventsToCSV(tableName)
 // exportCafesToCSV(tableName)
 // clearAllLogs()
+// tableStats()
